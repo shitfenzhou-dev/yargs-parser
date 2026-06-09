@@ -3766,6 +3766,55 @@ describe('yargs-parser', function () {
     })
   })
 
+  describe('escaped characters in string input', () => {
+    it('handles escaped double quotes inside double quotes', function () {
+      const args = parser('--msg "hello \\"world\\""')
+      args.msg.should.equal('hello "world"')
+    })
+
+    it('handles escaped single quotes inside single quotes', function () {
+      const args = parser("--msg 'it\\'s ok'")
+      args.msg.should.equal("it's ok")
+    })
+
+    it('handles escaped whitespace outside quotes', function () {
+      const args = parser('--name hello\\ world')
+      args.name.should.equal('hello world')
+    })
+
+    it('handles multiple escaped whitespace', function () {
+      const args = parser('cmd arg1\\ with\\ spaces arg2')
+      args._.should.eql(['cmd', 'arg1 with spaces', 'arg2'])
+    })
+
+    it('handles escaped backslash inside double quotes', function () {
+      const args = parser('--path "foo\\\\bar"')
+      args.path.should.equal('foo\\bar')
+    })
+
+    it('handles escaped backslash inside single quotes', function () {
+      const args = parser("--path 'foo\\\\bar'")
+      args.path.should.equal('foo\\bar')
+    })
+
+    it('handles escaped quote outside quotes', function () {
+      const args = parser('--msg \\"hello\\"')
+      args.msg.should.equal('hello')
+    })
+  })
+
+  describe('array input regression with escapes', () => {
+    it('array input does not process backslash escapes', function () {
+      const args = parser(['--msg', '"hello \\"world\\""'])
+      args.msg.should.equal('"hello \\"world\\""')
+    })
+
+    it('array input keeps escaped whitespace verbatim', function () {
+      const args = parser(['--name', 'hello\\ world'])
+      args.name.should.equal('hello\\ world')
+    })
+  })
+
   // see: https://github.com/yargs/yargs-parser/issues/144
   it('number/string types should use default when no right-hand value', () => {
     let argv = parser(['--foo'], {

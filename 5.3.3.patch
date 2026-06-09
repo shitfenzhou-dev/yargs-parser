@@ -1,0 +1,186 @@
+diff --git a/lib/tokenize-arg-string.ts b/lib/tokenize-arg-string.ts
+index 3d63e87..a83b4d7 100644
+--- a/lib/tokenize-arg-string.ts
++++ b/lib/tokenize-arg-string.ts
+@@ -22,6 +22,51 @@ export function tokenizeArgString (argString: string | any[]): string[] {
+     prevC = c
+     c = argString.charAt(ii)
+ 
++    if (c === '\\' && ii + 1 < argString.length) {
++      const nextC = argString.charAt(ii + 1)
++
++      if (nextC === '\\') {
++        if (!args[i]) args[i] = ''
++        args[i] += '\\'
++        ii++
++        c = '\\'
++        continue
++      }
++
++      if (opening) {
++        if (nextC === opening) {
++          if (!args[i]) args[i] = ''
++          args[i] += nextC
++          ii++
++          c = nextC
++          continue
++        }
++        if (!args[i]) args[i] = ''
++        args[i] += c
++        continue
++      }
++
++      if (nextC === ' ' || nextC === '\t') {
++        if (!args[i]) args[i] = ''
++        args[i] += nextC
++        ii++
++        c = nextC
++        continue
++      }
++
++      if (nextC === '"' || nextC === "'") {
++        if (!args[i]) args[i] = ''
++        args[i] += nextC
++        ii++
++        c = nextC
++        continue
++      }
++
++      if (!args[i]) args[i] = ''
++      args[i] += c
++      continue
++    }
++
+     // split on spaces unless we're in quotes.
+     if (c === ' ' && !opening) {
+       if (!(prevC === ' ')) {
+diff --git a/test/typescript/tokenize-arg-string.ts b/test/typescript/tokenize-arg-string.ts
+index dc77c3e..761ade8 100644
+--- a/test/typescript/tokenize-arg-string.ts
++++ b/test/typescript/tokenize-arg-string.ts
+@@ -129,4 +129,65 @@ describe('TokenizeArgString', function () {
+     strictEqual(args[0], '--foo')
+     strictEqual(args[1], '-bar')
+   })
++
++  it('handles escaped double quote inside double quotes', function () {
++    const args = tokenizeArgString('--msg "hello \\"world\\""')
++    strictEqual(args[0], '--msg')
++    strictEqual(args[1], '"hello "world""')
++  })
++
++  it('handles escaped single quote inside single quotes', function () {
++    const args = tokenizeArgString("--msg 'it\\'s ok'")
++    strictEqual(args[0], '--msg')
++    strictEqual(args[1], "'it's ok'")
++  })
++
++  it('handles escaped backslash inside double quotes', function () {
++    const args = tokenizeArgString('--path "foo\\\\bar"')
++    strictEqual(args[0], '--path')
++    strictEqual(args[1], '"foo\\\\bar"')
++  })
++
++  it('handles escaped backslash inside single quotes', function () {
++    const args = tokenizeArgString("--path 'foo\\\\bar'")
++    strictEqual(args[0], '--path')
++    strictEqual(args[1], "'foo\\\\bar'")
++  })
++
++  it('handles escaped whitespace outside quotes', function () {
++    const args = tokenizeArgString('--name hello\\ world')
++    strictEqual(args[0], '--name')
++    strictEqual(args[1], 'hello world')
++  })
++
++  it('handles multiple escaped whitespace outside quotes', function () {
++    const args = tokenizeArgString('cmd arg1\\ with\\ spaces arg2')
++    strictEqual(args[0], 'cmd')
++    strictEqual(args[1], 'arg1 with spaces')
++    strictEqual(args[2], 'arg2')
++  })
++
++  it('handles escaped quote outside quotes', function () {
++    const args = tokenizeArgString('--msg \\"hello\\"')
++    strictEqual(args[0], '--msg')
++    strictEqual(args[1], '"hello"')
++  })
++
++  it('handles backslash at end of string', function () {
++    const args = tokenizeArgString('--foo bar\\')
++    strictEqual(args[0], '--foo')
++    strictEqual(args[1], 'bar\\')
++  })
++
++  it('array input does not process escape sequences', function () {
++    const args = tokenizeArgString(['--msg', '"hello \\"world\\""'])
++    strictEqual(args[0], '--msg')
++    strictEqual(args[1], '"hello \\"world\\""')
++  })
++
++  it('array input keeps backslash escapes verbatim', function () {
++    const args = tokenizeArgString(['--name', 'hello\\ world'])
++    strictEqual(args[0], '--name')
++    strictEqual(args[1], 'hello\\ world')
++  })
+ })
+diff --git a/test/yargs-parser.mjs b/test/yargs-parser.mjs
+index 4c69237..b5ed67d 100644
+--- a/test/yargs-parser.mjs
++++ b/test/yargs-parser.mjs
+@@ -3766,6 +3766,55 @@ describe('yargs-parser', function () {
+     })
+   })
+ 
++  describe('escaped characters in string input', () => {
++    it('handles escaped double quotes inside double quotes', function () {
++      const args = parser('--msg "hello \\"world\\""')
++      args.msg.should.equal('hello "world"')
++    })
++
++    it('handles escaped single quotes inside single quotes', function () {
++      const args = parser("--msg 'it\\'s ok'")
++      args.msg.should.equal("it's ok")
++    })
++
++    it('handles escaped whitespace outside quotes', function () {
++      const args = parser('--name hello\\ world')
++      args.name.should.equal('hello world')
++    })
++
++    it('handles multiple escaped whitespace', function () {
++      const args = parser('cmd arg1\\ with\\ spaces arg2')
++      args._.should.eql(['cmd', 'arg1 with spaces', 'arg2'])
++    })
++
++    it('handles escaped backslash inside double quotes', function () {
++      const args = parser('--path "foo\\\\bar"')
++      args.path.should.equal('foo\\bar')
++    })
++
++    it('handles escaped backslash inside single quotes', function () {
++      const args = parser("--path 'foo\\\\bar'")
++      args.path.should.equal('foo\\bar')
++    })
++
++    it('handles escaped quote outside quotes', function () {
++      const args = parser('--msg \\"hello\\"')
++      args.msg.should.equal('hello')
++    })
++  })
++
++  describe('array input regression with escapes', () => {
++    it('array input does not process backslash escapes', function () {
++      const args = parser(['--msg', '"hello \\"world\\""'])
++      args.msg.should.equal('"hello \\"world\\""')
++    })
++
++    it('array input keeps escaped whitespace verbatim', function () {
++      const args = parser(['--name', 'hello\\ world'])
++      args.name.should.equal('hello\\ world')
++    })
++  })
++
+   // see: https://github.com/yargs/yargs-parser/issues/144
+   it('number/string types should use default when no right-hand value', () => {
+     let argv = parser(['--foo'], {

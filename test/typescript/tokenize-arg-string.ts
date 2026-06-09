@@ -129,4 +129,65 @@ describe('TokenizeArgString', function () {
     strictEqual(args[0], '--foo')
     strictEqual(args[1], '-bar')
   })
+
+  it('handles escaped double quote inside double quotes', function () {
+    const args = tokenizeArgString('--msg "hello \\"world\\""')
+    strictEqual(args[0], '--msg')
+    strictEqual(args[1], '"hello "world""')
+  })
+
+  it('handles escaped single quote inside single quotes', function () {
+    const args = tokenizeArgString("--msg 'it\\'s ok'")
+    strictEqual(args[0], '--msg')
+    strictEqual(args[1], "'it's ok'")
+  })
+
+  it('handles escaped backslash inside double quotes', function () {
+    const args = tokenizeArgString('--path "foo\\\\bar"')
+    strictEqual(args[0], '--path')
+    strictEqual(args[1], '"foo\\\\bar"')
+  })
+
+  it('handles escaped backslash inside single quotes', function () {
+    const args = tokenizeArgString("--path 'foo\\\\bar'")
+    strictEqual(args[0], '--path')
+    strictEqual(args[1], "'foo\\\\bar'")
+  })
+
+  it('handles escaped whitespace outside quotes', function () {
+    const args = tokenizeArgString('--name hello\\ world')
+    strictEqual(args[0], '--name')
+    strictEqual(args[1], 'hello world')
+  })
+
+  it('handles multiple escaped whitespace outside quotes', function () {
+    const args = tokenizeArgString('cmd arg1\\ with\\ spaces arg2')
+    strictEqual(args[0], 'cmd')
+    strictEqual(args[1], 'arg1 with spaces')
+    strictEqual(args[2], 'arg2')
+  })
+
+  it('handles escaped quote outside quotes', function () {
+    const args = tokenizeArgString('--msg \\"hello\\"')
+    strictEqual(args[0], '--msg')
+    strictEqual(args[1], '"hello"')
+  })
+
+  it('handles backslash at end of string', function () {
+    const args = tokenizeArgString('--foo bar\\')
+    strictEqual(args[0], '--foo')
+    strictEqual(args[1], 'bar\\')
+  })
+
+  it('array input does not process escape sequences', function () {
+    const args = tokenizeArgString(['--msg', '"hello \\"world\\""'])
+    strictEqual(args[0], '--msg')
+    strictEqual(args[1], '"hello \\"world\\""')
+  })
+
+  it('array input keeps backslash escapes verbatim', function () {
+    const args = tokenizeArgString(['--name', 'hello\\ world'])
+    strictEqual(args[0], '--name')
+    strictEqual(args[1], 'hello\\ world')
+  })
 })
