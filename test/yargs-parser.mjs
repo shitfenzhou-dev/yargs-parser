@@ -4174,4 +4174,179 @@ describe('yargs-parser', function () {
       parsed[arg].should.equal(35)
     })
   })
+
+  describe('alias regression tests after refactor', function () {
+    it('should maintain transitive alias merging behavior', function () {
+      const argv = parser(['-a', '11'], {
+        alias: {
+          a: ['b'],
+          b: ['c']
+        }
+      })
+      argv.a.should.equal(11)
+      argv.b.should.equal(11)
+      argv.c.should.equal(11)
+      argv._.should.deep.equal([])
+    })
+
+    it('should maintain camelCase expansion from dashed key', function () {
+      const argv = parser([], {
+        default: {
+          'foo-bar': 'baz'
+        }
+      })
+      argv['foo-bar'].should.equal('baz')
+      argv.fooBar.should.equal('baz')
+    })
+
+    it('should maintain dashed expansion from camelCase key', function () {
+      const argv = parser([], {
+        default: {
+          fooBar: 'baz'
+        }
+      })
+      argv.fooBar.should.equal('baz')
+      argv['foo-bar'].should.equal('baz')
+    })
+
+    it('should maintain dot-notation alias expansion', function () {
+      const argv = parser(['--foo.bar', '99'], {
+        alias: {
+          foo: ['f']
+        }
+      })
+      argv.foo.bar.should.equal(99)
+      argv.f.bar.should.equal(99)
+    })
+
+    it('should maintain nested dot-notation alias expansion', function () {
+      const argv = parser(['--foo.bar.snuh', '99', '--foo.apple', '33'], {
+        alias: {
+          foo: ['f']
+        }
+      })
+      argv.foo.bar.snuh.should.equal(99)
+      argv.f.bar.snuh.should.equal(99)
+      argv.foo.apple.should.equal(33)
+      argv.f.apple.should.equal(33)
+    })
+
+    it('should maintain dot-notation explicit alias behavior', function () {
+      const argv = parser(['--foo.bar', 'abc'], {
+        alias: {
+          'foo.bar': ['fb']
+        }
+      })
+      argv['foo.bar'].should.equal('abc')
+      argv.fb.should.equal('abc')
+    })
+
+    it('should maintain default value synchronization to aliases', function () {
+      const detailed = parser.detailed([], {
+        default: {
+          foo: 'bar'
+        },
+        alias: {
+          foo: ['f']
+        }
+      })
+      detailed.argv.foo.should.equal('bar')
+      detailed.argv.f.should.equal('bar')
+      detailed.defaulted.should.deep.equal({ foo: true })
+      detailed.defaulted.should.not.have.property('f')
+    })
+
+    it('should maintain defaulted semantics when alias is explicitly set', function () {
+      const detailed = parser.detailed('--f abc', {
+        default: {
+          foo: 'bar'
+        },
+        alias: {
+          foo: ['f']
+        }
+      })
+      detailed.argv.foo.should.equal('abc')
+      detailed.argv.f.should.equal('abc')
+      detailed.defaulted.should.deep.equal({})
+    })
+
+    it('should maintain strip-aliased behavior', function () {
+      const argv = parser(['--test-value', '1'], {
+        number: ['test-value'],
+        alias: {
+          'test-value': ['alt-test']
+        },
+        configuration: {
+          'strip-aliased': true
+        }
+      })
+      argv.should.deep.equal({
+        _: [],
+        'test-value': 1,
+        testValue: 1
+      })
+    })
+
+    it('should maintain strip-dashed behavior', function () {
+      const argv = parser(['--test-value', '1'], {
+        number: ['test-value'],
+        alias: {
+          'test-value': ['alt-test']
+        },
+        configuration: {
+          'strip-dashed': true
+        }
+      })
+      argv.should.deep.equal({
+        _: [],
+        testValue: 1,
+        altTest: 1
+      })
+    })
+
+    it('should maintain strip-aliased and strip-dashed combined behavior', function () {
+      const argv = parser(['--test-value', '1'], {
+        number: ['test-value'],
+        alias: {
+          'test-value': ['alt-test']
+        },
+        configuration: {
+          'strip-aliased': true,
+          'strip-dashed': true
+        }
+      })
+      argv.should.deep.equal({
+        _: [],
+        testValue: 1
+      })
+    })
+
+    it('should maintain camelCase expansion on dot-notation dashed keys', function () {
+      const argv = parser(['--foo-bar.baz-qux', '123'], {
+        alias: {
+          'foo-bar': ['fb']
+        }
+      })
+      argv['foo-bar']['baz-qux'].should.equal(123)
+      argv.fooBar['baz-qux'].should.equal(123)
+      argv['foo-bar'].bazQux.should.equal(123)
+      argv.fooBar.bazQux.should.equal(123)
+      argv.fb['baz-qux'].should.equal(123)
+      argv.fb.bazQux.should.equal(123)
+    })
+
+    it('should not duplicate aliases when multiple expansions available', function () {
+      const argv = parser(['--health-check=banana'], {
+        alias: {
+          h: ['health-check']
+        },
+        default: {
+          h: 'apple'
+        }
+      })
+      argv.healthCheck.should.eql('banana')
+      argv.h.should.eql('banana')
+      argv['health-check'].should.eql('banana')
+    })
+  })
 })

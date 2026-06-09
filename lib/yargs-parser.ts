@@ -6,6 +6,7 @@
 /* eslint-disable prefer-arrow-callback */
 
 import { tokenizeArgString } from './tokenize-arg-string.js'
+import { AliasHelper } from './alias-helper.js'
 import type {
   ArgsInput,
   Arguments,
@@ -30,7 +31,7 @@ import type {
   YargsParserMixin
 } from './yargs-parser-types.js'
 import { DefaultValuesForTypeKey } from './yargs-parser-types.js'
-import { camelCase, decamelize, looksLikeNumber } from './string-utils.js'
+import { camelCase, looksLikeNumber } from './string-utils.js'
 
 let mixin: YargsParserMixin
 export class YargsParser {
@@ -65,7 +66,7 @@ export class YargsParser {
     const inputIsString = typeof argsInput === 'string'
 
     // aliases might have transitive relationships, normalize this.
-    const aliases = combineAliases(Object.assign(Object.create(null), opts.alias))
+    const combinedAliases = AliasHelper.combineAliases(Object.assign(Object.create(null), opts.alias))
     const configuration: Configuration = Object.assign({
       'boolean-negation': true,
       'camel-case-expansion': true,
@@ -91,12 +92,14 @@ export class YargsParser {
     const envPrefix = opts.envPrefix
     const notFlagsOption = configuration['populate--']
     const notFlagsArgv: string = notFlagsOption ? '--' : '_'
-    const newAliases: Dictionary<boolean> = Object.create(null)
     const defaulted: Dictionary<boolean> = Object.create(null)
+    const aliasHelper = new AliasHelper(combinedAliases, {
+      'camel-case-expansion': configuration['camel-case-expansion']
+    })
     // allow a i18n handler to be passed in, default to a fake one (util.format).
     const __ = opts.__ || mixin.format
     const flags: Flags = {
-      aliases: Object.create(null),
+      aliases: aliasHelper.getAliases(),
       arrays: Object.create(null),
       bools: Object.create(null),
       strings: Object.create(null),
@@ -192,14 +195,10 @@ export class YargsParser {
 
     // create a lookup table that takes into account all
     // combinations of aliases: {f: ['foo'], foo: ['f']}
-    extendAliases(opts.key, aliases, opts.default, flags.arrays)
+    aliasHelper.extendAliases([opts.key, opts.default, flags.arrays])
 
     // apply default values to all aliases.
-    Object.keys(defaults).forEach(function (key) {
-      (flags.aliases[key] || []).forEach(function (alias) {
-        defaults[alias] = defaults[key]
-      })
-    })
+    aliasHelper.applyDefaultsToAliases(defaults)
 
     let error: Error | null = null
     checkConfiguration()
@@ -435,7 +434,7 @@ export class YargsParser {
     }
 
     if (configuration['strip-aliased']) {
-      ;([] as string[]).concat(...Object.keys(aliases).map(k => aliases[k])).forEach(alias => {
+      ;([] as string[]).concat(...Object.keys(combinedAliases).map(k => combinedAliases[k])).forEach(alias => {
         if (configuration['camel-case-expansion'] && alias.includes('-')) {
           delete argv[alias.split('.').map(prop => camelCase(prop)).join('.')]
         }
@@ -549,7 +548,7 @@ export class YargsParser {
         const alias = key.split('.').map(function (prop) {
           return camelCase(prop)
         }).join('.')
-        addNewAlias(key, alias)
+        aliasHelper.addAlias(key, alias)
       }
 
       const value = processValue(key, val, shouldStripQuotes)
@@ -596,16 +595,6 @@ export class YargsParser {
             }
           })
         })
-      }
-    }
-
-    function addNewAlias (key: string, alias: string): void {
-      if (!(flags.aliases[key] && flags.aliases[key].length)) {
-        flags.aliases[key] = [alias]
-        newAliases[alias] = true
-      }
-      if (!(flags.aliases[alias] && flags.aliases[alias].length)) {
-        addNewAlias(alias, key)
       }
     }
 
@@ -873,45 +862,6 @@ export class YargsParser {
       }
     }
 
-    // extend the aliases list with inferred aliases.
-    function extendAliases (...args: Array<{ [key: string]: any } | undefined>) {
-      args.forEach(function (obj) {
-        Object.keys(obj || {}).forEach(function (key) {
-          // short-circuit if we've already added a key
-          // to the aliases array, for example it might
-          // exist in both 'opts.default' and 'opts.key'.
-          if (flags.aliases[key]) return
-
-          flags.aliases[key] = ([] as string[]).concat(aliases[key] || [])
-          // For "--option-name", also set argv.optionName
-          flags.aliases[key].concat(key).forEach(function (x) {
-            if (/-/.test(x) && configuration['camel-case-expansion']) {
-              const c = camelCase(x)
-              if (c !== key && flags.aliases[key].indexOf(c) === -1) {
-                flags.aliases[key].push(c)
-                newAliases[c] = true
-              }
-            }
-          })
-          // For "--optionName", also set argv['option-name']
-          flags.aliases[key].concat(key).forEach(function (x) {
-            if (x.length > 1 && /[A-Z]/.test(x) && configuration['camel-case-expansion']) {
-              const c = decamelize(x, '-')
-              if (c !== key && flags.aliases[key].indexOf(c) === -1) {
-                flags.aliases[key].push(c)
-                newAliases[c] = true
-              }
-            }
-          })
-          flags.aliases[key].forEach(function (x) {
-            flags.aliases[x] = [key].concat(flags.aliases[key].filter(function (y) {
-              return x !== y
-            }))
-          })
-        })
-      })
-    }
-
     // return the 1st set flag for any of a key's aliases (or false if no flag set)
     function checkAllAliases (key: string, flag: StringFlag): ValueOf<StringFlag> | false
     function checkAllAliases (key: string, flag: BooleanFlag): ValueOf<BooleanFlag> | false
@@ -919,10 +869,7 @@ export class YargsParser {
     function checkAllAliases (key: string, flag: ConfigsFlag): ValueOf<ConfigsFlag> | false
     function checkAllAliases (key: string, flag: CoercionsFlag): ValueOf<CoercionsFlag> | false
     function checkAllAliases (key: string, flag: Flag): ValueOf<Flag> | false {
-      const toCheck = ([] as string[]).concat(flags.aliases[key] || [], key)
-      const keys = Object.keys(flag)
-      const setAlias = toCheck.find(key => keys.includes(key))
-      return setAlias ? flag[setAlias] : false
+      return aliasHelper.checkAllAliases(key, flag) as ValueOf<Flag> | false
     }
 
     function hasAnyFlag (key: string): boolean {
@@ -1043,59 +990,9 @@ export class YargsParser {
       configuration: configuration,
       defaulted: Object.assign({}, defaulted),
       error: error,
-      newAliases: Object.assign({}, newAliases)
+      newAliases: Object.assign({}, aliasHelper.getNewAliases())
     }
   }
-}
-
-// if any aliases reference each other, we should
-// merge them together.
-function combineAliases (aliases: Dictionary<string | string[]>): Dictionary<string[]> {
-  const aliasArrays: Array<string[]> = []
-  const combined: Dictionary<string[]> = Object.create(null)
-  let change = true
-
-  // turn alias lookup hash {key: ['alias1', 'alias2']} into
-  // a simple array ['key', 'alias1', 'alias2']
-  Object.keys(aliases).forEach(function (key) {
-    aliasArrays.push(
-      ([] as string[]).concat(aliases[key], key)
-    )
-  })
-
-  // combine arrays until zero changes are
-  // made in an iteration.
-  while (change) {
-    change = false
-    for (let i = 0; i < aliasArrays.length; i++) {
-      for (let ii = i + 1; ii < aliasArrays.length; ii++) {
-        const intersect = aliasArrays[i].filter(function (v) {
-          return aliasArrays[ii].indexOf(v) !== -1
-        })
-
-        if (intersect.length) {
-          aliasArrays[i] = aliasArrays[i].concat(aliasArrays[ii])
-          aliasArrays.splice(ii, 1)
-          change = true
-          break
-        }
-      }
-    }
-  }
-
-  // map arrays back to the hash-lookup (de-dupe while
-  // we're at it).
-  aliasArrays.forEach(function (aliasArray) {
-    aliasArray = aliasArray.filter(function (v, i, self) {
-      return self.indexOf(v) === i
-    })
-    const lastAlias = aliasArray.pop()
-    if (lastAlias !== undefined && typeof lastAlias === 'string') {
-      combined[lastAlias] = aliasArray
-    }
-  })
-
-  return combined
 }
 
 // this function should only be called when a count is given as an arg
