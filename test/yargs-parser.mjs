@@ -4174,4 +4174,178 @@ describe('yargs-parser', function () {
       parsed[arg].should.equal(35)
     })
   })
+
+  describe('external source priority (CLI > env > config > configObjects > default)', function () {
+    it('should give CLI highest priority over all other sources', function () {
+      process.env.TEST_CLI_PRIO_A = 'fromEnv'
+      const argv = parser(['--a', 'fromCli'], {
+        envPrefix: 'TEST_CLI_PRIO_',
+        configObjects: [{ a: 'fromConfigObj' }],
+        default: { a: 'fromDefault' }
+      })
+      argv.should.have.property('a', 'fromCli')
+    })
+
+    it('should give env priority over configObjects and default', function () {
+      process.env.TEST_ENV_PRIO_B = 'fromEnv'
+      const argv = parser([], {
+        envPrefix: 'TEST_ENV_PRIO_',
+        configObjects: [{ b: 'fromConfigObj' }],
+        default: { b: 'fromDefault' }
+      })
+      argv.should.have.property('b', 'fromEnv')
+    })
+
+    it('should give configObjects priority over default', function () {
+      const argv = parser([], {
+        configObjects: [{ c: 'fromConfigObj' }],
+        default: { c: 'fromDefault' }
+      })
+      argv.should.have.property('c', 'fromConfigObj')
+    })
+  })
+
+  describe('env provides config path', function () {
+    it('should use config file path from env variable', function () {
+      const jsonPath = path.resolve(__dirname, './fixtures/config.json')
+      process.env.TEST_ENV_CONFIG_PATH_CFG = jsonPath
+      const argv = parser([], {
+        envPrefix: 'TEST_ENV_CONFIG_PATH_',
+        config: true
+      })
+      argv.should.have.property('herp', 'derp')
+      argv.should.have.property('z', 55)
+    })
+  })
+
+  describe('config callback throws error', function () {
+    it('should set detailed error when config callback returns an Error', function () {
+      const argv = parser(['--config', 'some/path'], {
+        config: {
+          config: () => new Error('Custom config error')
+        }
+      })
+      argv._.should.eql([])
+      argv.should.include.keys(['_'])
+    })
+
+    it('should set detailed error when config callback throws', function () {
+      const argv = parser(['--config', 'some/path'], {
+        config: {
+          config: () => { throw new Error('Thrown config error') }
+        }
+      })
+      argv._.should.eql([])
+      argv.should.include.keys(['_'])
+    })
+  })
+
+  describe('alias source propagation', function () {
+    it('should sync alias values from config file', function () {
+      const jsonPath = path.resolve(__dirname, './fixtures/config.json')
+      const argv = parser(['--config', jsonPath], {
+        config: true,
+        alias: { herp: 'aliasHerp' }
+      })
+      argv.should.have.property('herp', 'derp')
+      argv.should.have.property('aliasHerp', 'derp')
+    })
+
+    it('should sync alias values from default', function () {
+      const argv = parser([], {
+        default: { foo: 'defaultFoo' },
+        alias: { foo: 'aliasFoo' }
+      })
+      argv.should.have.property('foo', 'defaultFoo')
+      argv.should.have.property('aliasFoo', 'defaultFoo')
+    })
+
+    it('should sync alias values from configObjects', function () {
+      const argv = parser([], {
+        configObjects: [{ bar: 'objBar' }],
+        alias: { bar: 'aliasBar' }
+      })
+      argv.should.have.property('bar', 'objBar')
+      argv.should.have.property('aliasBar', 'objBar')
+    })
+  })
+
+  describe('dot-notation configObjects', function () {
+    it('should expand nested objects from configObjects', function () {
+      const argv = parser([], {
+        configObjects: [{
+          nested: {
+            key: 'nestedValue'
+          }
+        }]
+      })
+      argv.should.have.property('nested.key', 'nestedValue')
+    })
+
+    it('should not expand nested objects when dot-notation is disabled', function () {
+      const argv = parser([], {
+        configObjects: [{
+          nested: {
+            key: 'nestedValue'
+          }
+        }],
+        configuration: {
+          'dot-notation': false
+        }
+      })
+      argv.should.have.property('nested')
+      argv.nested.should.have.property('key', 'nestedValue')
+    })
+  })
+
+  describe('combine-arrays with external sources', function () {
+    it('should combine CLI array with configObject array when combine-arrays is enabled', function () {
+      const argv = parser(['--list', 'a'], {
+        array: ['list'],
+        configObjects: [{ list: ['b'] }],
+        configuration: {
+          'combine-arrays': true
+        }
+      })
+      argv.should.have.property('list')
+      argv.list.should.eql(['a', 'b'])
+    })
+
+    it('should combine configObject array with another configObject array', function () {
+      const argv = parser([], {
+        array: ['list'],
+        configObjects: [{ list: ['a'] }, { list: ['b'] }],
+        configuration: {
+          'combine-arrays': true
+        }
+      })
+      argv.should.have.property('list')
+      argv.list.should.eql(['a', 'b'])
+    })
+  })
+
+  describe('normalize array with external sources', function () {
+    it('should normalize array values from configObjects', function () {
+      const argv = parser([], {
+        array: ['paths'],
+        normalize: ['paths'],
+        configObjects: [{
+          paths: ['./foo/../bar']
+        }]
+      })
+      argv.should.have.property('paths')
+      argv.paths[0].should.equal('bar')
+    })
+
+    it('should normalize array values from env', function () {
+      process.env.TEST_NORM_PATH = './baz/../qux'
+      const argv = parser([], {
+        array: ['testNorm'],
+        normalize: ['testNorm'],
+        envPrefix: 'TEST_NORM_'
+      })
+      argv.should.have.property('testNorm')
+      argv.testNorm[0].should.equal('qux')
+    })
+  })
 })
