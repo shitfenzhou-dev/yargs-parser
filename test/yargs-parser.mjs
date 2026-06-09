@@ -4142,7 +4142,102 @@ describe('yargs-parser', function () {
   //   delete process.env.YARGS_MIN_NODE_VERSION
   // })
 
+  describe('prototype pollution protections', () => {
+    afterEach(() => {
+      delete Object.prototype.polluted
+      delete Array.prototype.polluted
+      delete Function.prototype.polluted
+    })
+
+    function verifyClean() {
+      expect(Object.prototype.polluted).to.equal(undefined)
+      expect(Array.prototype.polluted).to.equal(undefined)
+      expect(Function.prototype.polluted).to.equal(undefined)
+    }
+
+    it('protects via CLI arguments with dot-notation', () => {
+      parser(['--constructor.prototype.polluted', '1', '--__proto__.polluted', '2'])
+      verifyClean()
+    })
+
+    it('protects via default configuration', () => {
+      parser([], { default: { 'constructor.prototype.polluted': '1', '__proto__.polluted': '2' } })
+      verifyClean()
+    })
+
+    it('protects via configObjects', () => {
+      parser([], {
+        configObjects: [{ constructor: { prototype: { polluted: '1' } }, __proto__: { polluted: '2' } }]
+      })
+      verifyClean()
+    })
+
+    it('protects via envPrefix', () => {
+      process.env.APP_CONSTRUCTOR__PROTOTYPE__POLLUTED = '1'
+      process.env.APP___PROTO____POLLUTED = '2'
+      parser([], { envPrefix: 'APP' })
+      delete process.env.APP_CONSTRUCTOR__PROTOTYPE__POLLUTED
+      delete process.env.APP___PROTO____POLLUTED
+      verifyClean()
+    })
+
+    it('protects via alias bidirectional mappings', () => {
+      parser(['--a.polluted', '1', '--b.polluted', '2'], {
+        alias: {
+          'constructor.prototype': 'a',
+          b: '__proto__'
+        }
+      })
+      verifyClean()
+    })
+
+    it('protects via camelCase alias', () => {
+      parser(['--constructor-prototype-polluted', '1', '--__proto__-polluted', '2'], {
+        configuration: { 'camel-case-expansion': true }
+      })
+      verifyClean()
+    })
+
+    it('protects when dot-notation=false', () => {
+      parser(['--constructor.prototype.polluted', '1', '--__proto__.polluted', '2'], {
+        configuration: { 'dot-notation': false }
+      })
+      verifyClean()
+    })
+
+    it('protects via array combination', () => {
+      parser(['--x', '1', '--x.constructor.prototype.polluted', '2', '--y', '1', '--y.__proto__.polluted', '2'])
+      verifyClean()
+    })
+
+    it('protects via narg', () => {
+      parser(['--constructor.prototype.polluted', '1', '--__proto__.polluted', '2'], {
+        narg: { 'constructor.prototype.polluted': 1, '__proto__.polluted': 1 }
+      })
+      verifyClean()
+    })
+
+    it('protects via coerce return values', () => {
+      parser(['--a', '1', '--b', '2'], {
+        coerce: {
+          a: () => {
+            const obj = Object.create(null)
+            obj.prototype = { polluted: '1' }
+            return obj
+          },
+          b: () => ({ polluted: '2' })
+        },
+        alias: {
+          a: 'constructor',
+          b: '__proto__'
+        }
+      })
+      verifyClean()
+    })
+  })
+
   // Refs: https://github.com/yargs/yargs-parser/issues/386
+
   describe('perf', () => {
     const i = 100000
     describe('unknown-options-as-args', () => {

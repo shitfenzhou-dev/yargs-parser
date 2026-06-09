@@ -437,10 +437,10 @@ export class YargsParser {
     if (configuration['strip-aliased']) {
       ;([] as string[]).concat(...Object.keys(aliases).map(k => aliases[k])).forEach(alias => {
         if (configuration['camel-case-expansion'] && alias.includes('-')) {
-          delete argv[alias.split('.').map(prop => camelCase(prop)).join('.')]
+          delete argv[sanitizeKey(alias.split('.').map(prop => camelCase(prop)).join('.'))]
         }
 
-        delete argv[alias]
+        delete argv[sanitizeKey(alias)]
       })
     }
 
@@ -586,7 +586,7 @@ export class YargsParser {
       if (checkAllAliases(key, flags.normalize) && !checkAllAliases(key, flags.arrays)) {
         const keys = [key].concat(flags.aliases[key] || [])
         keys.forEach(function (key) {
-          Object.defineProperty(argvReturn, key, {
+          Object.defineProperty(argvReturn, sanitizeKey(key), {
             enumerable: true,
             get () {
               return val
@@ -757,7 +757,7 @@ export class YargsParser {
               const value = maybeCoerceNumber(key, coerce(argv[key]))
               ;(([] as string[]).concat(flags.aliases[key] || [], key)).forEach(ali => {
                 applied.add(ali)
-                argv[ali] = value
+                argv[sanitizeKey(ali)] = value
               })
             } catch (err) {
               error = err as Error
@@ -771,7 +771,8 @@ export class YargsParser {
       flags.keys.forEach((key) => {
         // don't set placeholder keys for dot notation options 'foo.bar'.
         if (~key.indexOf('.')) return
-        if (typeof argv[key] === 'undefined') argv[key] = undefined
+        const sanitized = sanitizeKey(key)
+        if (typeof argv[sanitized] === 'undefined') argv[sanitized] = undefined
       })
       return argv
     }
@@ -1037,14 +1038,30 @@ export class YargsParser {
       })
     }
 
-    return {
-      aliases: Object.assign({}, flags.aliases),
-      argv: Object.assign(argvReturn, argv),
-      configuration: configuration,
-      defaulted: Object.assign({}, defaulted),
-      error: error,
-      newAliases: Object.assign({}, newAliases)
-    }
+  function sanitizeObject<T extends Record<string, any>>(obj: T): T {
+    const res: any = Object.create(null)
+    Object.keys(obj).forEach(key => {
+      res[sanitizeKey(key)] = obj[key]
+    })
+    return res
+  }
+
+  function sanitizeAliases(obj: Record<string, string[]>): Record<string, string[]> {
+    const res: Record<string, string[]> = Object.create(null)
+    Object.keys(obj).forEach(key => {
+      res[sanitizeKey(key)] = obj[key].map(sanitizeKey)
+    })
+    return res
+  }
+
+  return {
+    aliases: Object.assign({}, sanitizeAliases(flags.aliases)),
+    argv: Object.assign(argvReturn, argv),
+    configuration: configuration,
+    defaulted: Object.assign({}, sanitizeObject(defaulted)),
+    error: error,
+    newAliases: Object.assign({}, sanitizeObject(newAliases))
+  }
   }
 }
 
@@ -1109,6 +1126,8 @@ function increment (orig?: number | undefined): number {
 // Object.create(null) for dot notation:
 function sanitizeKey (key: string): string {
   if (key === '__proto__') return '___proto___'
+  if (key === 'constructor') return '___constructor___'
+  if (key === 'prototype') return '___prototype___'
   return key
 }
 
