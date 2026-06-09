@@ -1,0 +1,141 @@
+diff --git a/lib/tokenize-arg-string.ts b/lib/tokenize-arg-string.ts
+index 3d63e87..dbb3f92 100644
+--- a/lib/tokenize-arg-string.ts
++++ b/lib/tokenize-arg-string.ts
+@@ -13,18 +13,29 @@ export function tokenizeArgString (argString: string | any[]): string[] {
+   argString = argString.trim()
+ 
+   let i = 0
+-  let prevC: string | null = null
+-  let c: string | null = null
+   let opening: string | null = null
++  let escaping = false
+   const args: string[] = []
+ 
+   for (let ii = 0; ii < argString.length; ii++) {
+-    prevC = c
+-    c = argString.charAt(ii)
++    const c = argString.charAt(ii)
+ 
+-    // split on spaces unless we're in quotes.
+-    if (c === ' ' && !opening) {
+-      if (!(prevC === ' ')) {
++    if (escaping) {
++      if (!args[i]) args[i] = ''
++      args[i] += c
++      escaping = false
++      continue
++    }
++
++    if (c === '\\' && shouldEscapeCharacter(argString.charAt(ii + 1), opening)) {
++      if (!args[i]) args[i] = ''
++      escaping = true
++      continue
++    }
++
++    // split on whitespace unless we're in quotes.
++    if (/\s/.test(c) && !opening) {
++      if (args[i]) {
+         i++
+       }
+       continue
+@@ -44,3 +55,15 @@ export function tokenizeArgString (argString: string | any[]): string[] {
+ 
+   return args
+ }
++
++function shouldEscapeCharacter (character: string, opening: string | null): boolean {
++  if (!character) {
++    return false
++  }
++
++  if (character === '\\' || character === '"' || character === "'") {
++    return true
++  }
++
++  return !opening && /\s/.test(character)
++}
+diff --git a/test/typescript/tokenize-arg-string.ts b/test/typescript/tokenize-arg-string.ts
+index dc77c3e..d0f7754 100644
+--- a/test/typescript/tokenize-arg-string.ts
++++ b/test/typescript/tokenize-arg-string.ts
+@@ -1,6 +1,6 @@
+ /* global describe, it */
+ /* eslint-disable prefer-arrow-callback */
+-import { strictEqual } from 'assert'
++import { deepStrictEqual, strictEqual } from 'assert'
+ import { tokenizeArgString } from '../../lib/tokenize-arg-string.js'
+ 
+ describe('TokenizeArgString', function () {
+@@ -57,6 +57,30 @@ describe('TokenizeArgString', function () {
+     strictEqual(args[2], '--bar=\'foo "bar"\'')
+   })
+ 
++  it('handles escaped double quotes in double quoted strings', function () {
++    const args = tokenizeArgString('--msg "hello \\\"world\\\""')
++    strictEqual(args[0], '--msg')
++    strictEqual(args[1], '"hello "world""')
++  })
++
++  it('handles escaped single quotes in single quoted strings', function () {
++    const args = tokenizeArgString("--msg 'it\\\'s ok'")
++    strictEqual(args[0], '--msg')
++    strictEqual(args[1], "'it's ok'")
++  })
++
++  it('handles escaped backslashes in string input', function () {
++    const args = tokenizeArgString('--path "C:\\\\temp\\\\logs"')
++    strictEqual(args[0], '--path')
++    strictEqual(args[1], '"C:\\temp\\logs"')
++  })
++
++  it('handles escaped whitespace in string input', function () {
++    const args = tokenizeArgString('--name hello\\ world')
++    strictEqual(args[0], '--name')
++    strictEqual(args[1], 'hello world')
++  })
++
+   // https://github.com/yargs/yargs-parser/pull/100
+   // https://github.com/yargs/yargs-parser/pull/106
+   it('ignores unneeded spaces', function () {
+@@ -124,6 +148,11 @@ describe('TokenizeArgString', function () {
+     strictEqual(args[2], '--bar=\'foo "bar"\'')
+   })
+ 
++  it('keeps array input escape sequences unchanged apart from string coercion', function () {
++    const args = tokenizeArgString(['--msg', '"hello \\\"world\\\""', '--name', 'hello\\ world', 99])
++    deepStrictEqual(args, ['--msg', '"hello \\\"world\\\""', '--name', 'hello\\ world', '99'])
++  })
++
+   it('handles array with boolean options', function () {
+     const args = tokenizeArgString(['--foo', '-bar'])
+     strictEqual(args[0], '--foo')
+diff --git a/test/yargs-parser.mjs b/test/yargs-parser.mjs
+index 4c69237..6a26837 100644
+--- a/test/yargs-parser.mjs
++++ b/test/yargs-parser.mjs
+@@ -3738,6 +3738,24 @@ describe('yargs-parser', function () {
+       args2.bar.should.equal('goodnight"moon')
+     })
+ 
++    it('handles escaped quotes in string input', function () {
++      const args = parser('--msg "hello \\\"world\\\"" --quote \'it\\\'s ok\'')
++      args.msg.should.equal('hello "world"')
++      args.quote.should.equal("it's ok")
++    })
++
++    it('handles escaped whitespace in string input', function () {
++      const args = parser('--name hello\\ world --city san\\ francisco')
++      args.name.should.equal('hello world')
++      args.city.should.equal('san francisco')
++    })
++
++    it('keeps array input escape sequences unchanged', function () {
++      const args = parser(['--msg', '"hello \\\"world\\\""', '--name', 'hello\\ world'])
++      args.msg.should.equal('"hello \\\"world\\\""')
++      args.name.should.equal('hello\\ world')
++    })
++
+     it('handles strings with dashes', function () {
+       const args = parser('--foo "-hello world" --bar="--goodnight moon"')
+       args.foo.should.equal('-hello world')

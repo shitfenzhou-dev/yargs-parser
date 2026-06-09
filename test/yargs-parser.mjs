@@ -3738,6 +3738,24 @@ describe('yargs-parser', function () {
       args2.bar.should.equal('goodnight"moon')
     })
 
+    it('handles escaped quotes in string input', function () {
+      const args = parser('--msg "hello \\\"world\\\"" --quote \'it\\\'s ok\'')
+      args.msg.should.equal('hello "world"')
+      args.quote.should.equal("it's ok")
+    })
+
+    it('handles escaped whitespace in string input', function () {
+      const args = parser('--name hello\\ world --city san\\ francisco')
+      args.name.should.equal('hello world')
+      args.city.should.equal('san francisco')
+    })
+
+    it('keeps array input escape sequences unchanged', function () {
+      const args = parser(['--msg', '"hello \\\"world\\\""', '--name', 'hello\\ world'])
+      args.msg.should.equal('"hello \\\"world\\\""')
+      args.name.should.equal('hello\\ world')
+    })
+
     it('handles strings with dashes', function () {
       const args = parser('--foo "-hello world" --bar="--goodnight moon"')
       args.foo.should.equal('-hello world')

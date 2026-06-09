@@ -13,18 +13,29 @@ export function tokenizeArgString (argString: string | any[]): string[] {
   argString = argString.trim()
 
   let i = 0
-  let prevC: string | null = null
-  let c: string | null = null
   let opening: string | null = null
+  let escaping = false
   const args: string[] = []
 
   for (let ii = 0; ii < argString.length; ii++) {
-    prevC = c
-    c = argString.charAt(ii)
+    const c = argString.charAt(ii)
 
-    // split on spaces unless we're in quotes.
-    if (c === ' ' && !opening) {
-      if (!(prevC === ' ')) {
+    if (escaping) {
+      if (!args[i]) args[i] = ''
+      args[i] += c
+      escaping = false
+      continue
+    }
+
+    if (c === '\\' && shouldEscapeCharacter(argString.charAt(ii + 1), opening)) {
+      if (!args[i]) args[i] = ''
+      escaping = true
+      continue
+    }
+
+    // split on whitespace unless we're in quotes.
+    if (/\s/.test(c) && !opening) {
+      if (args[i]) {
         i++
       }
       continue
@@ -43,4 +54,16 @@ export function tokenizeArgString (argString: string | any[]): string[] {
   }
 
   return args
+}
+
+function shouldEscapeCharacter (character: string, opening: string | null): boolean {
+  if (!character) {
+    return false
+  }
+
+  if (character === '\\' || character === '"' || character === "'") {
+    return true
+  }
+
+  return !opening && /\s/.test(character)
 }

@@ -1,6 +1,6 @@
 /* global describe, it */
 /* eslint-disable prefer-arrow-callback */
-import { strictEqual } from 'assert'
+import { deepStrictEqual, strictEqual } from 'assert'
 import { tokenizeArgString } from '../../lib/tokenize-arg-string.js'
 
 describe('TokenizeArgString', function () {
@@ -55,6 +55,30 @@ describe('TokenizeArgString', function () {
     strictEqual(args[0], '--foo')
     strictEqual(args[1], '"hello \'world\'"')
     strictEqual(args[2], '--bar=\'foo "bar"\'')
+  })
+
+  it('handles escaped double quotes in double quoted strings', function () {
+    const args = tokenizeArgString('--msg "hello \\\"world\\\""')
+    strictEqual(args[0], '--msg')
+    strictEqual(args[1], '"hello "world""')
+  })
+
+  it('handles escaped single quotes in single quoted strings', function () {
+    const args = tokenizeArgString("--msg 'it\\\'s ok'")
+    strictEqual(args[0], '--msg')
+    strictEqual(args[1], "'it's ok'")
+  })
+
+  it('handles escaped backslashes in string input', function () {
+    const args = tokenizeArgString('--path "C:\\\\temp\\\\logs"')
+    strictEqual(args[0], '--path')
+    strictEqual(args[1], '"C:\\temp\\logs"')
+  })
+
+  it('handles escaped whitespace in string input', function () {
+    const args = tokenizeArgString('--name hello\\ world')
+    strictEqual(args[0], '--name')
+    strictEqual(args[1], 'hello world')
   })
 
   // https://github.com/yargs/yargs-parser/pull/100
@@ -122,6 +146,11 @@ describe('TokenizeArgString', function () {
     strictEqual(args[0], '--foo')
     strictEqual(args[1], '"hello \'world\'"')
     strictEqual(args[2], '--bar=\'foo "bar"\'')
+  })
+
+  it('keeps array input escape sequences unchanged apart from string coercion', function () {
+    const args = tokenizeArgString(['--msg', '"hello \\\"world\\\""', '--name', 'hello\\ world', 99])
+    deepStrictEqual(args, ['--msg', '"hello \\\"world\\\""', '--name', 'hello\\ world', '99'])
   })
 
   it('handles array with boolean options', function () {
