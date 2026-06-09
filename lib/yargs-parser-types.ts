@@ -90,7 +90,7 @@ export interface Configuration {
   'unknown-options-as-args': boolean;
 }
 
-export type ArrayOption = string | { key: string; boolean?: boolean, string?: boolean, number?: boolean, integer?: boolean };
+export type ArrayOption = string | { key: string; boolean?: boolean; string?: boolean; number?: boolean; integer?: boolean };
 
 export type CoerceCallback = (arg: any) => any;
 
@@ -101,8 +101,8 @@ export interface Options {
   alias: Dictionary<string | string[]>;
   /**
    * Indicate that keys should be parsed as an array: `{ array: ['foo', 'bar'] }`.
-   * Indicate that keys should be parsed as an array and coerced to booleans / numbers:
-   * { array: [ { key: 'foo', boolean: true }, {key: 'bar', number: true} ] }`.
+   * Indicate that keys should be parsed as an array and coerced to booleans / numbers / integers:
+   * `{ array: [{ key: 'foo', boolean: true }, { key: 'bar', number: true }, { key: 'baz', integer: true }] }`.
    */
   array: ArrayOption | ArrayOption[];
   /** Arguments should be parsed as booleans: `{ boolean: ['x', 'y'] }`. */
@@ -132,6 +132,8 @@ export interface Options {
   string: string | string[];
   /** Keys should be treated as numbers. */
   number: string | string[];
+  /** Keys should be treated as integers. */
+  integer: string | string[];
   /** i18n handler, defaults to util.format */
   __: (format: any, ...param: any[]) => string;
   /** alias lookup table defaults */
@@ -160,6 +162,7 @@ export interface Parser {
 export type StringFlag = Dictionary<string[]>;
 export type BooleanFlag = Dictionary<boolean>;
 export type NumberFlag = Dictionary<number>;
+export type IntegerFlag = Dictionary<boolean>;
 export type ConfigsFlag = Dictionary<string | string[] | boolean | ConfigCallback>;
 export type CoercionsFlag = Dictionary<CoerceCallback>;
 export type KeysFlag = string[];
@@ -170,6 +173,7 @@ export interface Flags {
   bools: BooleanFlag;
   strings: BooleanFlag;
   numbers: BooleanFlag;
+  integers: IntegerFlag;
   counts: BooleanFlag;
   normalize: BooleanFlag;
   configs: ConfigsFlag;
@@ -184,7 +188,7 @@ export type FlagValue = ValueOf<Flag>;
 
 export type FlagsKey = KeyOf<Omit<Flags, 'keys'>>;
 
-export type ArrayFlagsKey = Extract<FlagsKey, 'bools' | 'strings' | 'numbers'>;
+export type ArrayFlagsKey = Extract<FlagsKey, 'bools' | 'strings' | 'numbers' | 'integers'>;
 
 export enum DefaultValuesForTypeKey {
   BOOLEAN = 'boolean',

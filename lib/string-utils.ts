@@ -61,3 +61,11 @@ export function looksLikeNumber (x: null | undefined | number | string): boolean
   if (/^0[^.]/.test(x)) return false
   return /^[-]?(?:\d+(?:\.\d*)?|\.\d+)(e[-+]?\d+)?$/.test(x)
 }
+
+export function looksLikeInteger (x: null | undefined | number | string): boolean {
+  if (x === null || x === undefined) return false
+  if (typeof x === 'number') return Number.isSafeInteger(x)
+  if (!looksLikeNumber(x)) return false
+  if (/^0x[0-9a-f]+$/i.test(x)) return Number.isSafeInteger(Number(x))
+  return /^-?(?:0|[1-9]\d*)(e[-+]?\d+)?$/.test(x) && Number.isSafeInteger(Number(x))
+}

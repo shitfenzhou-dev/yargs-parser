@@ -2,6 +2,7 @@
 
 import { expect, should } from 'chai'
 import * as fs from 'node:fs'
+import * as os from 'node:os'
 import parser from '../build/lib/index.js'
 import * as path from 'path'
 import { fileURLToPath } from 'node:url';
@@ -10,6 +11,18 @@ import { createRequire } from 'node:module';
 // quick port from cjs to esm
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const require = createRequire(import.meta.url);
+
+function createTempJsonConfig (config) {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'yargs-parser-'))
+  const configPath = path.join(directory, 'config.json')
+  fs.writeFileSync(configPath, JSON.stringify(config))
+  return {
+    configPath,
+    cleanup () {
+      fs.rmSync(directory, { recursive: true, force: true })
+    }
+  }
+}
 
 should()
 
@@ -2526,6 +2539,189 @@ describe('yargs-parser', function () {
         })
 
         expect(parsed.foo).to.deep.equal([[4], [5, 2], [1, 2, 3]])
+      })
+    })
+
+    describe('parse integers', function () {
+      it('parses integer typed options from cli', function () {
+        parser(['--port', '3000'], {
+          integer: ['port']
+        }).port.should.equal(3000)
+
+        parser(['--port=1e3'], {
+          integer: ['port']
+        }).port.should.equal(1000)
+
+        parser(['--port', '0x10'], {
+          integer: ['port']
+        }).port.should.equal(16)
+      })
+
+      it('parses integer typed arrays', function () {
+        const parsed = parser(['--ids', '1', '2'], {
+          array: [{ key: 'ids', integer: true }]
+        })
+
+        parsed.ids.should.deep.equal([1, 2])
+      })
+
+      it('applies integer typing to aliases', function () {
+        const long = parser(['--port', '3000'], {
+          integer: ['port'],
+          alias: {
+            port: ['p']
+          }
+        })
+        const short = parser(['--p', '3000'], {
+          integer: ['port'],
+          alias: {
+            port: ['p']
+          }
+        })
+
+        long.port.should.equal(3000)
+        long.p.should.equal(3000)
+        short.port.should.equal(3000)
+        short.p.should.equal(3000)
+      })
+
+      it('applies integer typing to defaults', function () {
+        const parsed = parser([], {
+          integer: ['port'],
+          default: {
+            port: '3000'
+          }
+        })
+
+        parsed.port.should.equal(3000)
+      })
+
+      it('applies integer typing to config objects', function () {
+        const parsed = parser([], {
+          integer: ['port'],
+          configObjects: [{
+            port: '3000'
+          }]
+        })
+
+        parsed.port.should.equal(3000)
+      })
+
+      it('applies integer typing to config files', function () {
+        const { configPath, cleanup } = createTempJsonConfig({ port: '3000' })
+
+        try {
+          const parsed = parser(['--config', configPath], {
+            integer: ['port'],
+            config: ['config']
+          })
+
+          parsed.port.should.equal(3000)
+        } finally {
+          cleanup()
+        }
+      })
+
+      it('applies integer typing to environment variables', function () {
+        process.env.INTEGER_PORT = '3000'
+        const parsed = parser([], {
+          integer: ['port'],
+          envPrefix: 'INTEGER_'
+        })
+
+        parsed.port.should.equal(3000)
+      })
+
+      it('preserves source precedence while applying integer typing', function () {
+        const { configPath, cleanup } = createTempJsonConfig({ port: '4000' })
+        process.env.INTEGER_PRIORITY_CFG = configPath
+        process.env.INTEGER_PRIORITY_PORT = '5000'
+
+        try {
+          const parsed = parser(['--port', '6000'], {
+            integer: ['port'],
+            config: ['cfg'],
+            configObjects: [{
+              port: '3000'
+            }],
+            default: {
+              port: '2000'
+            },
+            envPrefix: 'INTEGER_PRIORITY_'
+          })
+
+          parsed.port.should.equal(6000)
+        } finally {
+          cleanup()
+        }
+      })
+
+      it('runs coerce before validating integer values', function () {
+        const parsed = parser(['--port', '3000'], {
+          integer: ['port'],
+          coerce: {
+            port: value => `${value}`
+          }
+        })
+
+        parsed.port.should.equal(3000)
+      })
+
+      it('reports invalid integer values from cli input', function () {
+        ;['3.14', '1.5e2', 'abc', '1e', '0100', '00.1', '9007199254740992'].forEach(value => {
+          const parsed = parser.detailed(['--port', value], {
+            integer: ['port']
+          })
+
+          parsed.error.message.should.contain('port')
+          parsed.error.message.should.contain(value)
+        })
+      })
+
+      it('reports invalid integer values returned from coerce', function () {
+        const parsed = parser.detailed(['--port', '3000'], {
+          integer: ['port'],
+          coerce: {
+            port: () => '3.14'
+          }
+        })
+
+        parsed.error.message.should.contain('port')
+        parsed.error.message.should.contain('3.14')
+      })
+
+      it('reports integer configuration conflicts', function () {
+        const configurations = [
+          {
+            opts: { string: ['port'], integer: ['port'] },
+            expected: 'Invalid configuration: port, opts.string excludes opts.integer.'
+          },
+          {
+            opts: { boolean: ['port'], integer: ['port'] },
+            expected: 'Invalid configuration: port, opts.boolean excludes opts.integer.'
+          },
+          {
+            opts: { number: ['port'], integer: ['port'] },
+            expected: 'Invalid configuration: port, opts.number excludes opts.integer.'
+          },
+          {
+            opts: { count: ['port'], integer: ['port'] },
+            expected: 'Invalid configuration: port, opts.count excludes opts.integer.'
+          }
+        ]
+
+        configurations.forEach(({ opts, expected }) => {
+          const parsed = parser.detailed([], opts)
+          parsed.error.message.should.equal(expected)
+        })
+      })
+
+      it('keeps number option behavior unchanged', function () {
+        const parsed = parser(['--port', '1.5e2'], {
+          number: ['port']
+        })
+
+        parsed.port.should.equal(150)
       })
     })
 
