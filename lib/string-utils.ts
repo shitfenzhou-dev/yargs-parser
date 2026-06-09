@@ -61,3 +61,17 @@ export function looksLikeNumber (x: null | undefined | number | string): boolean
   if (/^0[^.]/.test(x)) return false
   return /^[-]?(?:\d+(?:\.\d*)?|\.\d+)(e[-+]?\d+)?$/.test(x)
 }
+
+export function isSafeInteger (x: null | undefined | number | string): boolean {
+  if (x === null || x === undefined) return false
+  if (typeof x === 'number') return Number.isSafeInteger(x)
+  if (typeof x === 'string') {
+    if (/^0x[0-9a-f]+$/i.test(x)) return Number.isSafeInteger(Number(x))
+    // don't treat 0123 as a number; as it drops the leading '0'.
+    if (/^0[^.]/.test(x)) return false
+    // reject strings containing a decimal point
+    if (x.indexOf('.') !== -1) return false
+    if (/^[-]?\d+(e[-+]?\d+)?$/i.test(x)) return Number.isSafeInteger(Number(x))
+  }
+  return false
+}

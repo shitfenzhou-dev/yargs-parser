@@ -4174,4 +4174,103 @@ describe('yargs-parser', function () {
       parsed[arg].should.equal(35)
     })
   })
+
+  describe('integer', () => {
+    it('parses ordinary option as integer', () => {
+      const argv = parser(['--port', '3000'], { integer: ['port'] })
+      expect(argv.port).to.equal(3000)
+    })
+
+    it('handles floating point scientific notation correctly without parsing as integer', () => {
+      const res = parser.detailed(['--port=1.5e2'], { integer: ['port'] })
+      expect(res.error).to.exist
+      expect(res.error.message).to.match(/not an integer/)
+      expect(res.argv.port).to.equal('1.5e2')
+    })
+
+    it('parses integer scientific notation', () => {
+      const argv = parser(['--port=1e3'], { integer: ['port'] })
+      expect(argv.port).to.equal(1000)
+    })
+
+    it('parses hex integer', () => {
+      const argv = parser(['--port', '0x10'], { integer: ['port'] })
+      expect(argv.port).to.equal(16)
+    })
+
+    it('supports array object integer: true', () => {
+      const argv = parser(['--ids', '1', '2'], { array: [{ key: 'ids', integer: true }] })
+      expect(argv.ids).to.deep.equal([1, 2])
+    })
+
+    it('applies to default', () => {
+      const argv = parser([], { integer: ['port'], default: { port: '3000' } })
+      expect(argv.port).to.equal(3000)
+    })
+
+    it('applies to configObjects', () => {
+      const argv = parser([], { integer: ['port'], configObjects: [{ port: '0x10' }] })
+      expect(argv.port).to.equal(16)
+    })
+
+    it('applies to envPrefix', () => {
+      process.env.YARGS_PORT = '100'
+      const argv = parser([], { integer: ['port'], envPrefix: 'YARGS' })
+      expect(argv.port).to.equal(100)
+      delete process.env.YARGS_PORT
+    })
+
+    it('applies to config file', () => {
+      const argv = parser(['--config', 'test/fixtures/config.json'], { integer: ['z'], config: ['config'] })
+      expect(argv.z).to.equal(55)
+    })
+
+    it('works with aliases', () => {
+      const argv = parser(['--p', '200'], { integer: ['port'], alias: { port: ['p'] } })
+      expect(argv.port).to.equal(200)
+    })
+
+    it('reports error for invalid values', () => {
+      const errs = ['3.14', '1.5e2', 'abc', '1e', '0100', '00.1', '9007199254740992']
+      errs.forEach(v => {
+        const res = parser.detailed(['--port', v], { integer: ['port'] })
+        expect(res.error, `Should have error for ${v}`).to.exist
+        expect(res.error.message).to.match(/not an integer/)
+      })
+    })
+
+    it('works with coerce successfully', () => {
+      const res = parser.detailed(['--port', '1.5e2'], { integer: ['port'], coerce: { port: v => '150' } })
+      expect(res.error).to.not.exist
+      expect(res.argv.port).to.equal(150)
+    })
+
+    it('reports error if coerce returns invalid integer', () => {
+      const res = parser.detailed(['--port', '100'], { integer: ['port'], coerce: { port: v => '1.5e2' } })
+      expect(res.error).to.exist
+      expect(res.error.message).to.match(/not an integer/)
+      expect(res.argv.port).to.equal('1.5e2')
+    })
+
+    it('reports error on configuration conflict with string/boolean/number/count', () => {
+      const conflicts = [
+        { string: ['port'] },
+        { boolean: ['port'] },
+        { number: ['port'] },
+        { count: ['port'] }
+      ]
+      conflicts.forEach(opts => {
+        const res = parser.detailed([], { integer: ['port'], ...opts })
+        expect(res.error).to.exist
+        expect(res.error.message).to.match(/conflicts with/)
+      })
+    })
+
+    it('keeps number old behavior intact', () => {
+      const argv = parser(['--num=3.14', '--sci=1.5e2', '--hex=0x10'], { number: ['num', 'sci', 'hex'] })
+      expect(argv.num).to.equal(3.14)
+      expect(argv.sci).to.equal(150)
+      expect(argv.hex).to.equal(16)
+    })
+  })
 })

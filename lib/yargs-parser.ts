@@ -30,7 +30,7 @@ import type {
   YargsParserMixin
 } from './yargs-parser-types.js'
 import { DefaultValuesForTypeKey } from './yargs-parser-types.js'
-import { camelCase, decamelize, looksLikeNumber } from './string-utils.js'
+import { camelCase, decamelize, looksLikeNumber, isSafeInteger } from './string-utils.js'
 
 let mixin: YargsParserMixin
 export class YargsParser {
@@ -101,6 +101,7 @@ export class YargsParser {
       bools: Object.create(null),
       strings: Object.create(null),
       numbers: Object.create(null),
+      integers: Object.create(null),
       counts: Object.create(null),
       normalize: Object.create(null),
       configs: Object.create(null),
@@ -114,12 +115,13 @@ export class YargsParser {
     ;([] as ArrayOption[]).concat(opts.array || []).filter(Boolean).forEach(function (opt) {
       const key = typeof opt === 'object' ? opt.key : opt
 
-      // assign to flags[bools|strings|numbers]
+      // assign to flags[bools|strings|numbers|integers]
       const assignment: ArrayFlagsKey | undefined = Object.keys(opt).map(function (key) {
         const arrayFlagKeys: Record<string, ArrayFlagsKey> = {
           boolean: 'bools',
           string: 'strings',
-          number: 'numbers'
+          number: 'numbers',
+          integer: 'integers'
         }
         return arrayFlagKeys[key]
       }).filter(Boolean).pop()
@@ -145,6 +147,11 @@ export class YargsParser {
 
     ;([] as string[]).concat(opts.number || []).filter(Boolean).forEach(function (key) {
       flags.numbers[key] = true
+      flags.keys.push(key)
+    })
+
+    ;([] as string[]).concat(opts.integer || []).filter(Boolean).forEach(function (key) {
+      flags.integers[key] = true
       flags.keys.push(key)
     })
 
@@ -415,6 +422,7 @@ export class YargsParser {
     setConfigObjects()
     applyDefaultsAndAliases(argv, flags.aliases, defaults, true)
     applyCoercions(argv)
+    applyIntegers(argv)
     if (configuration['set-placeholder-key']) setPlaceholderKeys(argv)
 
     // for any counts either not in args or without an explicit default, set to 0
@@ -640,6 +648,11 @@ export class YargsParser {
     function maybeCoerceNumber (key: string, value: string | number | null | undefined) {
       if (!configuration['parse-positional-numbers'] && key === '_') return value
       if (!checkAllAliases(key, flags.strings) && !checkAllAliases(key, flags.bools) && !Array.isArray(value)) {
+        const isInt = checkAllAliases(key, flags.integers)
+        if (isInt) {
+          return value
+        }
+
         const shouldCoerceNumber = looksLikeNumber(value) && configuration['parse-numbers'] && (
           Number.isSafeInteger(Math.floor(parseFloat(`${value}`)))
         )
@@ -765,6 +778,56 @@ export class YargsParser {
           }
         }
       })
+    }
+
+    function applyIntegers (argv: Arguments): void {
+      Object.keys(flags.integers).forEach(function (key) {
+        if (hasKey(argv, key.split('.'))) {
+          let value = argv[key]
+          let invalid = false
+          if (Array.isArray(value)) {
+            value = value.map(function (v) {
+              if (!isSafeInteger(v)) {
+                invalid = true
+                return v
+              }
+              return Number(v)
+            })
+          } else if (value !== undefined) {
+            if (!isSafeInteger(value)) {
+              invalid = true
+            } else {
+              value = Number(value)
+            }
+          }
+          if (invalid) {
+            error = Error(__('Argument: %s, Given: %s is not an integer.', key, Array.isArray(value) ? value.join(',') : value))
+          }
+          overwriteKey(argv, key.split('.'), value)
+          ;(flags.aliases[key] || []).forEach(function (alias) {
+            overwriteKey(argv, alias.split('.'), value)
+          })
+        }
+      })
+    }
+
+    function overwriteKey (obj: { [key: string]: any }, keys: string[], value: any): void {
+      let o = obj
+      if (!configuration['dot-notation']) keys = [keys.join('.')]
+      keys.slice(0, -1).forEach(function (key) {
+        key = sanitizeKey(key)
+        if (typeof o === 'object' && o[key] !== undefined) {
+          if (Array.isArray(o[key])) {
+            o = o[key][o[key].length - 1]
+          } else {
+            o = o[key]
+          }
+        }
+      })
+      const key = sanitizeKey(keys[keys.length - 1])
+      if (typeof o === 'object') {
+        o[key] = value
+      }
     }
 
     function setPlaceholderKeys (argv: Arguments): Arguments {
@@ -1031,6 +1094,24 @@ export class YargsParser {
           return true
         } else if (checkAllAliases(key, flags.nargs)) {
           error = Error(__('Invalid configuration: %s, opts.count excludes opts.narg.', key))
+          return true
+        }
+        return false
+      })
+
+      // integer keys should not conflict with string, number, boolean, or count
+      Object.keys(flags.integers).find(key => {
+        if (checkAllAliases(key, flags.strings)) {
+          error = Error(__('Invalid configuration: %s, opts.integer conflicts with opts.string.', key))
+          return true
+        } else if (checkAllAliases(key, flags.numbers)) {
+          error = Error(__('Invalid configuration: %s, opts.integer conflicts with opts.number.', key))
+          return true
+        } else if (checkAllAliases(key, flags.bools)) {
+          error = Error(__('Invalid configuration: %s, opts.integer conflicts with opts.boolean.', key))
+          return true
+        } else if (checkAllAliases(key, flags.counts)) {
+          error = Error(__('Invalid configuration: %s, opts.integer conflicts with opts.count.', key))
           return true
         }
         return false
