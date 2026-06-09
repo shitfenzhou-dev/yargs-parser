@@ -409,11 +409,8 @@ export class YargsParser {
     // 3. value from config file
     // 4. value from config objects
     // 5. configured default value
-    applyEnvVars(argv, true) // special case: check env vars that point to config file
-    applyEnvVars(argv, false)
-    setConfig(argv)
-    setConfigObjects()
-    applyDefaultsAndAliases(argv, flags.aliases, defaults, true)
+    applyExternalSources(argv, envPrefix, configObjects)
+    applyDefaultSources(argv, defaults)
     applyCoercions(argv)
     if (configuration['set-placeholder-key']) setPlaceholderKeys(argv)
 
@@ -650,6 +647,51 @@ export class YargsParser {
       return value
     }
 
+    // --- applying non-CLI sources: env vars, config files, config objects ---
+    // these helpers take the truly-external state as explicit parameters
+    // (argv, envPrefix, configObjects, defaults) while sharing via closure
+    // the parse-internal state (flags, configuration, error, mixin, defaulted,
+    // and helpers such as setArg / hasKey / setKey).
+
+    function applyExternalSources (argv: Arguments, envPrefix: string | undefined | null, configObjects: Array<{ [key: string]: any }> | undefined): void {
+      // env-vars that point to a config file are processed before regular env,
+      // so that a config path supplied via envPrefix can be picked up by setConfig.
+      applyEnvVars(argv, envPrefix, true)
+      applyEnvVars(argv, envPrefix, false)
+      applyConfigSources(argv, configObjects)
+    }
+
+    function applyConfigSources (argv: Arguments, configObjects: Array<{ [key: string]: any }> | undefined): void {
+      setConfig(argv)
+      setConfigObjects(argv, configObjects)
+    }
+
+    function applyDefaultSources (argv: Arguments, defaults: OptionsDefault): void {
+      applyDefaultsAndAliases(argv, flags.aliases, defaults, true)
+    }
+
+    function applyEnvVars (argv: Arguments, envPrefix: string | undefined | null, configOnly: boolean): void {
+      if (typeof envPrefix === 'undefined') return
+
+      const prefix = typeof envPrefix === 'string' ? envPrefix : ''
+      const env = mixin.env()
+      Object.keys(env).forEach(function (envVar) {
+        if (prefix === '' || envVar.lastIndexOf(prefix, 0) === 0) {
+          // get array of nested keys and convert them to camel case
+          const keys = envVar.split('__').map(function (key, i) {
+            if (i === 0) {
+              key = key.substring(prefix.length)
+            }
+            return camelCase(key)
+          })
+
+          if (((configOnly && flags.configs[keys.join('.')]) || !configOnly) && !hasKey(argv, keys)) {
+            setArg(keys.join('.'), env[envVar])
+          }
+        }
+      })
+    }
+
     // set args from config.json file, this should be
     // applied last so that defaults can be applied.
     function setConfig (argv: Arguments): void {
@@ -716,34 +758,12 @@ export class YargsParser {
     }
 
     // set all config objects passed in opts
-    function setConfigObjects (): void {
+    function setConfigObjects (argv: Arguments, configObjects: Array<{ [key: string]: any }> | undefined): void {
       if (typeof configObjects !== 'undefined') {
         configObjects.forEach(function (configObject) {
           setConfigObject(configObject)
         })
       }
-    }
-
-    function applyEnvVars (argv: Arguments, configOnly: boolean): void {
-      if (typeof envPrefix === 'undefined') return
-
-      const prefix = typeof envPrefix === 'string' ? envPrefix : ''
-      const env = mixin.env()
-      Object.keys(env).forEach(function (envVar) {
-        if (prefix === '' || envVar.lastIndexOf(prefix, 0) === 0) {
-          // get array of nested keys and convert them to camel case
-          const keys = envVar.split('__').map(function (key, i) {
-            if (i === 0) {
-              key = key.substring(prefix.length)
-            }
-            return camelCase(key)
-          })
-
-          if (((configOnly && flags.configs[keys.join('.')]) || !configOnly) && !hasKey(argv, keys)) {
-            setArg(keys.join('.'), env[envVar])
-          }
-        }
-      })
     }
 
     function applyCoercions (argv: Arguments): void {

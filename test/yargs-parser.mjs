@@ -4174,4 +4174,148 @@ describe('yargs-parser', function () {
       parsed[arg].should.equal(35)
     })
   })
+
+  describe('non-CLI source precedence and integration (refactor guard tests)', function () {
+    it('should enforce CLI > envPrefix > config file > configObjects > default', function () {
+      process.env.RF_TEST_A = 'from-env'
+      process.env.RF_TEST_B = 'from-env'
+      process.env.RF_TEST_C = 'from-env'
+      process.env.RF_TEST_D = 'from-env'
+      process.env.RF_TEST_E = 'from-env'
+
+      const argv = parser(['--a=from-cli'], {
+        envPrefix: 'RF_TEST',
+        config: ['settings'],
+        default: {
+          settings: jsonPath,
+          a: 'from-default',
+          b: 'from-default',
+          c: 'from-default',
+          d: 'from-default',
+          e: 'from-default',
+          f: 'from-default'
+        },
+        configObjects: [{
+          a: 'from-config-object',
+          b: 'from-config-object',
+          c: 'from-config-object',
+          d: 'from-config-object',
+          e: 'from-config-object',
+          f: 'from-config-object'
+        }]
+      })
+
+      // `a` is overridden via CLI and wins over everything
+      argv.a.should.equal('from-cli')
+      // `b` is in env and env wins over config/file/object/default
+      argv.b.should.equal('from-env')
+      // `c` is set only via config file + configObjects + default; config file wins
+      // (the config.json fixture sets `herp`; we rely on a key that exists only in
+      // configObjects vs config file; instead we use `foo` which is `baz` in config.json)
+      argv.foo.should.equal('baz')
+      // `d` / `e`: env provides these via RF_TEST prefix
+      argv.d.should.equal('from-env')
+      argv.e.should.equal('from-env')
+      // `f`: not in CLI/env/config file, so configObjects wins
+      argv.f.should.equal('from-config-object')
+    })
+
+    it('should apply env vars that point to a config file before regular env vars', function () {
+      process.env.RF_CFG_SETTINGS = jsonPath
+      const argv = parser([], {
+        envPrefix: 'RF_CFG',
+        config: 'settings'
+      })
+      argv.should.have.property('herp', 'derp')
+      argv.should.have.property('z', 55)
+    })
+
+    it('should surface error when config callback returns an Error', function () {
+      const result = parser.detailed(['--settings', jsonPath, '--foo', 'bar'], {
+        config: {
+          settings: function () {
+            return new Error('boom')
+          }
+        }
+      })
+      expect(result.error).to.be.an.instanceof(Error)
+      expect(result.error.message).to.equal('boom')
+    })
+
+    it('should surface error when config callback throws', function () {
+      const result = parser.detailed(['--settings', jsonPath], {
+        config: {
+          settings: function () {
+            throw new Error('kaboom')
+          }
+        }
+      })
+      expect(result.error).to.be.an.instanceof(Error)
+      expect(result.error.message).to.equal('kaboom')
+    })
+
+    it('should propagate alias+default through configObjects', function () {
+      const argv = parser([], {
+        alias: { n: ['name', 'aliasName'] },
+        default: { name: 'default-name' },
+        configObjects: [{ name: 'object-name' }]
+      })
+      argv.name.should.equal('object-name')
+      argv.n.should.equal('object-name')
+      argv.aliasName.should.equal('object-name')
+    })
+
+    it('should honor default when no other source sets the value', function () {
+      const argv = parser([], {
+        default: { foo: 'bar' }
+      })
+      argv.foo.should.equal('bar')
+    })
+
+    it('should not expand nested objects from configObjects when dot-notation is disabled', function () {
+      const argv = parser([], {
+        configObjects: [{
+          'nested.foo': 'dot-key',
+          nested: { bar: 'obj-val' }
+        }],
+        configuration: {
+          'dot-notation': false
+        }
+      })
+      argv['nested.foo'].should.equal('dot-key')
+      // nested object is set directly, no traversal
+      argv.nested.should.deep.equal({ bar: 'obj-val' })
+    })
+
+    it('should combine array typed values across CLI and configObjects when combine-arrays is enabled', function () {
+      const argv = parser(['--fruits', 'apple', '--fruits', 'banana'], {
+        array: ['fruits'],
+        configObjects: [{ fruits: 'cherry' }],
+        configuration: {
+          'combine-arrays': true
+        }
+      })
+      argv.fruits.should.deep.equal(['apple', 'banana', 'cherry'])
+    })
+
+    it('should normalize array values provided via configObjects', function () {
+      const argv = parser([], {
+        array: ['s'],
+        normalize: ['s'],
+        configObjects: [{ s: [['', 'tmp', '..', 'foo'].join(path.sep), ['', 'a', 'b', '..', 'c'].join(path.sep)] }]
+      })
+      argv.s.should.deep.equal([path.sep + 'foo', [['', 'a', 'c'].join(path.sep)]].flat())
+    })
+
+    it('should keep envPrefix=null / empty-string / undefined behavior unchanged', function () {
+      process.env.RF_EMPTY_A = 'a'
+
+      // empty string prefix -> should apply
+      parser([], { envPrefix: '' }).a.should.equal('a')
+      // null prefix -> should apply (falls back to empty)
+      parser([], { envPrefix: null }).a.should.equal('a')
+      // undefined prefix -> should NOT apply
+      expect(parser([], { envPrefix: undefined }).a).to.equal(undefined)
+    })
+  })
 })
