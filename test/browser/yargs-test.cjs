@@ -1,24 +1,27 @@
-const { deepStrictEqual } = require('assert')
+const { deepStrictEqual, strictEqual } = require('assert')
 const puppeteer = require('puppeteer')
 
-// Runs a browser window with a given argv string and options:
 let browser
 async function parse (argv, opts) {
   if (!browser) {
-    // The developer install of Chromium is blocked by apparmor changes in Ubuntu 22.04.
-    // We are only running local tests and so easiest setup is to skip the sandbox.
-    browser = await puppeteer.launch({ 
-      args: ['--no-sandbox', '--disable-setuid-sandbox'] 
-  })
+    browser = await puppeteer.launch({
+      args: ['--no-sandbox', '--disable-setuid-sandbox']
+    })
   }
+
   const page = await browser.newPage()
-  opts = encodeURIComponent(JSON.stringify(opts))
-  await page.goto(`http://127.0.0.1:8080/test/browser/yargs-test?argv=${encodeURIComponent(argv)}&opts=${opts}`)
+  const searchParams = new URLSearchParams({
+    argv,
+    opts: JSON.stringify(opts || {})
+  })
+
+  await page.goto(`http://127.0.0.1:8080/test/browser/yargs-test.html?${searchParams.toString()}`)
   const element = await page.$('#output')
-  return JSON.parse(await page.evaluate(element => element.textContent, element))
+  const output = JSON.parse(await page.evaluate(element => element.textContent, element))
+  await page.close()
+  return output
 }
 
-// The actual tests:
 async function tests () {
   {
     const output = await parse('--hello world --x 102')
@@ -46,14 +49,47 @@ async function tests () {
     })
     console.info('✅ parse with aliases')
   }
+
+  {
+    const output = await parse('--hello world', {
+      envPrefix: 'APP_'
+    })
+    deepStrictEqual(output, {
+      _: [],
+      hello: 'world'
+    })
+    console.info('✅ envPrefix does not throw in browser')
+  }
+
+  {
+    const output = await parse('', {
+      envPrefix: 'APP_'
+    })
+    deepStrictEqual(output, {
+      _: []
+    })
+    console.info('✅ empty browser env does not inject values')
+  }
+
+  {
+    const output = await parse('--app-value cli', {
+      envPrefix: 'APP_',
+      default: {
+        appValue: 'default'
+      }
+    })
+    deepStrictEqual(output._, [])
+    strictEqual(output.appValue, 'cli')
+    console.info('✅ browser env does not override CLI/default precedence')
+  }
 }
 
-tests().then(() => {
+tests().then(async () => {
   console.info('👌all tests finished')
-  browser.close()
-}).catch((err) => {
+  if (browser) await browser.close()
+}).catch(async (err) => {
   console.error(err.stack)
   console.error('❌some tests failed')
   process.exitCode = 1
-  browser.close()
+  if (browser) await browser.close()
 })
