@@ -61,3 +61,61 @@ export function looksLikeNumber (x: null | undefined | number | string): boolean
   if (/^0[^.]/.test(x)) return false
   return /^[-]?(?:\d+(?:\.\d*)?|\.\d+)(e[-+]?\d+)?$/.test(x)
 }
+
+export interface IntegerParseResult {
+  value: number | null
+  error: string | null
+}
+
+export function parseInteger (x: null | undefined | number | string): IntegerParseResult {
+  if (x === null || x === undefined) {
+    return { value: null, error: 'Expected an integer, received null or undefined' }
+  }
+  if (typeof x === 'number') {
+    if (!Number.isInteger(x)) {
+      return { value: null, error: `Expected an integer, received ${x}` }
+    }
+    if (!Number.isSafeInteger(x)) {
+      return { value: null, error: `Integer ${x} exceeds safe integer range` }
+    }
+    return { value: x, error: null }
+  }
+  if (typeof x !== 'string') {
+    return { value: null, error: `Expected an integer, received ${typeof x}` }
+  }
+  const str = x.trim()
+  if (str === '') {
+    return { value: null, error: 'Expected an integer, received empty string' }
+  }
+  if (/^0[^.]/.test(str)) {
+    return { value: null, error: `Invalid integer with leading zero: "${str}"` }
+  }
+  if (/^[-+]?\d+$/.test(str)) {
+    const num = Number(str)
+    if (!Number.isSafeInteger(num)) {
+      return { value: null, error: `Integer ${str} exceeds safe integer range` }
+    }
+    return { value: num, error: null }
+  }
+  if (/^0x[0-9a-f]+$/i.test(str)) {
+    const num = Number(str)
+    if (!Number.isSafeInteger(num)) {
+      return { value: null, error: `Integer ${str} exceeds safe integer range` }
+    }
+    return { value: num, error: null }
+  }
+  if (/^[-+]?(?:\d+(?:\.\d*)?|\.\d+)(e[-+]?\d+)?$/i.test(str)) {
+    const num = Number(str)
+    if (!Number.isFinite(num)) {
+      return { value: null, error: `Integer ${str} exceeds safe integer range` }
+    }
+    if (!Number.isInteger(num)) {
+      return { value: null, error: `Expected an integer, received ${str}` }
+    }
+    if (!Number.isSafeInteger(num)) {
+      return { value: null, error: `Integer ${str} exceeds safe integer range` }
+    }
+    return { value: num, error: null }
+  }
+  return { value: null, error: `Expected an integer, received "${str}"` }
+}

@@ -30,7 +30,7 @@ import type {
   YargsParserMixin
 } from './yargs-parser-types.js'
 import { DefaultValuesForTypeKey } from './yargs-parser-types.js'
-import { camelCase, decamelize, looksLikeNumber } from './string-utils.js'
+import { camelCase, decamelize, looksLikeNumber, parseInteger } from './string-utils.js'
 
 let mixin: YargsParserMixin
 export class YargsParser {
@@ -54,6 +54,7 @@ export class YargsParser {
       normalize: undefined,
       string: undefined,
       number: undefined,
+      integer: undefined,
       __: undefined,
       key: undefined
     }, options)
@@ -101,6 +102,7 @@ export class YargsParser {
       bools: Object.create(null),
       strings: Object.create(null),
       numbers: Object.create(null),
+      integers: Object.create(null),
       counts: Object.create(null),
       normalize: Object.create(null),
       configs: Object.create(null),
@@ -119,7 +121,8 @@ export class YargsParser {
         const arrayFlagKeys: Record<string, ArrayFlagsKey> = {
           boolean: 'bools',
           string: 'strings',
-          number: 'numbers'
+          number: 'numbers',
+          integer: 'integers'
         }
         return arrayFlagKeys[key]
       }).filter(Boolean).pop()
@@ -145,6 +148,11 @@ export class YargsParser {
 
     ;([] as string[]).concat(opts.number || []).filter(Boolean).forEach(function (key) {
       flags.numbers[key] = true
+      flags.keys.push(key)
+    })
+
+    ;([] as string[]).concat(opts.integer || []).filter(Boolean).forEach(function (key) {
+      flags.integers[key] = true
       flags.keys.push(key)
     })
 
@@ -415,6 +423,7 @@ export class YargsParser {
     setConfigObjects()
     applyDefaultsAndAliases(argv, flags.aliases, defaults, true)
     applyCoercions(argv)
+    applyIntegerCoercion(argv)
     if (configuration['set-placeholder-key']) setPlaceholderKeys(argv)
 
     // for any counts either not in args or without an explicit default, set to 0
@@ -639,7 +648,7 @@ export class YargsParser {
 
     function maybeCoerceNumber (key: string, value: string | number | null | undefined) {
       if (!configuration['parse-positional-numbers'] && key === '_') return value
-      if (!checkAllAliases(key, flags.strings) && !checkAllAliases(key, flags.bools) && !Array.isArray(value)) {
+      if (!checkAllAliases(key, flags.strings) && !checkAllAliases(key, flags.bools) && !checkAllAliases(key, flags.integers) && !Array.isArray(value)) {
         const shouldCoerceNumber = looksLikeNumber(value) && configuration['parse-numbers'] && (
           Number.isSafeInteger(Math.floor(parseFloat(`${value}`)))
         )
@@ -762,6 +771,42 @@ export class YargsParser {
             } catch (err) {
               error = err as Error
             }
+          }
+        }
+      })
+    }
+
+    function applyIntegerCoercion (argv: Arguments): void {
+      const applied: Set<string> = new Set()
+      Object.keys(argv).forEach(function (key) {
+        if (applied.has(key)) return
+        if (!checkAllAliases(key, flags.integers)) return
+        applied.add(key)
+        ;(flags.aliases[key] || []).forEach(function (ali) { applied.add(ali) })
+
+        const val = argv[key]
+        if (Array.isArray(val)) {
+          const converted: (number | string)[] = []
+          for (const item of val) {
+            const result = parseInteger(item)
+            if (result.error !== null) {
+              error = Error(__('Invalid integer value for %s: %s', key, item))
+              converted.push(item)
+            } else {
+              converted.push(result.value!)
+            }
+          }
+          ;(([] as string[]).concat(flags.aliases[key] || [], key)).forEach(ali => {
+            argv[ali] = converted
+          })
+        } else {
+          const result = parseInteger(val)
+          if (result.error !== null) {
+            error = Error(__('Invalid integer value for %s: %s', key, val))
+          } else {
+            ;(([] as string[]).concat(flags.aliases[key] || [], key)).forEach(ali => {
+              argv[ali] = result.value
+            })
           }
         }
       })
@@ -1002,6 +1047,7 @@ export class YargsParser {
         [DefaultValuesForTypeKey.BOOLEAN]: true,
         [DefaultValuesForTypeKey.STRING]: '',
         [DefaultValuesForTypeKey.NUMBER]: undefined,
+        [DefaultValuesForTypeKey.INTEGER]: undefined,
         [DefaultValuesForTypeKey.ARRAY]: []
       }
 
@@ -1013,6 +1059,7 @@ export class YargsParser {
       let type: DefaultValuesForTypeKey = DefaultValuesForTypeKey.BOOLEAN
       if (checkAllAliases(key, flags.strings)) type = DefaultValuesForTypeKey.STRING
       else if (checkAllAliases(key, flags.numbers)) type = DefaultValuesForTypeKey.NUMBER
+      else if (checkAllAliases(key, flags.integers)) type = DefaultValuesForTypeKey.INTEGER
       else if (checkAllAliases(key, flags.bools)) type = DefaultValuesForTypeKey.BOOLEAN
       else if (checkAllAliases(key, flags.arrays)) type = DefaultValuesForTypeKey.ARRAY
       return type
@@ -1031,6 +1078,24 @@ export class YargsParser {
           return true
         } else if (checkAllAliases(key, flags.nargs)) {
           error = Error(__('Invalid configuration: %s, opts.count excludes opts.narg.', key))
+          return true
+        }
+        return false
+      })
+
+      // integer conflicts with string, boolean, number, count
+      Object.keys(flags.integers).find(key => {
+        if (checkAllAliases(key, flags.strings)) {
+          error = Error(__('Invalid configuration: %s, opts.integer excludes opts.string.', key))
+          return true
+        } else if (checkAllAliases(key, flags.bools)) {
+          error = Error(__('Invalid configuration: %s, opts.integer excludes opts.boolean.', key))
+          return true
+        } else if (checkAllAliases(key, flags.numbers)) {
+          error = Error(__('Invalid configuration: %s, opts.integer excludes opts.number.', key))
+          return true
+        } else if (checkAllAliases(key, flags.counts)) {
+          error = Error(__('Invalid configuration: %s, opts.integer excludes opts.count.', key))
           return true
         }
         return false

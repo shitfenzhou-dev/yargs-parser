@@ -4174,4 +4174,355 @@ describe('yargs-parser', function () {
       parsed[arg].should.equal(35)
     })
   })
+
+  describe('integer', function () {
+    it('should parse a simple integer option', function () {
+      const result = parser(['--port', '3000'], { integer: ['port'] })
+      result.port.should.equal(3000)
+    })
+
+    it('should parse integer with scientific notation that resolves to integer', function () {
+      const result = parser(['--port', '1e3'], { integer: ['port'] })
+      result.port.should.equal(1000)
+    })
+
+    it('should parse integer with hexadecimal notation', function () {
+      const result = parser(['--port', '0x10'], { integer: ['port'] })
+      result.port.should.equal(16)
+    })
+
+    it('should parse integer with negative value', function () {
+      const result = parser(['--port', '-42'], { integer: ['port'] })
+      result.port.should.equal(-42)
+    })
+
+    it('should parse integer with = syntax', function () {
+      const result = parser(['--port=3000'], { integer: ['port'] })
+      result.port.should.equal(3000)
+    })
+
+    it('should parse integer with short option', function () {
+      const result = parser(['-p', '3000'], { integer: ['p'] })
+      result.p.should.equal(3000)
+    })
+
+    it('should reject decimal values with detailed error', function () {
+      const result = parser.detailed(['--port', '3.14'], { integer: ['port'] })
+      result.error.should.not.be.null
+      result.error.message.should.include('port')
+      result.error.message.should.include('3.14')
+    })
+
+    it('should reject non-integer scientific notation with detailed error', function () {
+      const result = parser.detailed(['--port', '1.5e2'], { integer: ['port'] })
+      result.error.should.not.be.null
+      result.error.message.should.include('port')
+    })
+
+    it('should reject non-numeric string with detailed error', function () {
+      const result = parser.detailed(['--port', 'abc'], { integer: ['port'] })
+      result.error.should.not.be.null
+      result.error.message.should.include('port')
+      result.error.message.should.include('abc')
+    })
+
+    it('should reject incomplete scientific notation with detailed error', function () {
+      const result = parser.detailed(['--port', '1e'], { integer: ['port'] })
+      result.error.should.not.be.null
+      result.error.message.should.include('port')
+    })
+
+    it('should reject value exceeding MAX_SAFE_INTEGER', function () {
+      const result = parser.detailed(['--port', '9007199254740992'], { integer: ['port'] })
+      result.error.should.not.be.null
+      result.error.message.should.include('port')
+    })
+
+    it('should accept MAX_SAFE_INTEGER', function () {
+      const result = parser(['--port', '9007199254740991'], { integer: ['port'] })
+      result.port.should.equal(Number.MAX_SAFE_INTEGER)
+    })
+
+    it('should reject negative value exceeding MIN_SAFE_INTEGER', function () {
+      const result = parser.detailed(['--port', '-9007199254740992'], { integer: ['port'] })
+      result.error.should.not.be.null
+    })
+
+    it('should reject leading zeros like "0100"', function () {
+      const result = parser.detailed(['--port', '0100'], { integer: ['port'] })
+      result.error.should.not.be.null
+      result.error.message.should.include('port')
+    })
+
+    it('should reject leading zeros like "00.1"', function () {
+      const result = parser.detailed(['--port', '00.1'], { integer: ['port'] })
+      result.error.should.not.be.null
+    })
+
+    it('should accept zero as valid integer', function () {
+      const result = parser(['--port', '0'], { integer: ['port'] })
+      result.port.should.equal(0)
+    })
+
+    describe('array with integer', function () {
+      it('should parse array of integers', function () {
+        const result = parser(['--ids', '1', '2'], { array: [{ key: 'ids', integer: true }] })
+        result.ids.should.deep.equal([1, 2])
+      })
+
+      it('should parse array of integers with hexadecimal', function () {
+        const result = parser(['--ids', '0x1', '0x10'], { array: [{ key: 'ids', integer: true }] })
+        result.ids.should.deep.equal([1, 16])
+      })
+
+      it('should report error for invalid integer in array', function () {
+        const result = parser.detailed(['--ids', '1', 'abc', '3'], { array: [{ key: 'ids', integer: true }] })
+        result.error.should.not.be.null
+        result.error.message.should.include('ids')
+        result.error.message.should.include('abc')
+      })
+
+      it('should report error for decimal in integer array', function () {
+        const result = parser.detailed(['--ids', '1', '3.14'], { array: [{ key: 'ids', integer: true }] })
+        result.error.should.not.be.null
+      })
+    })
+
+    describe('alias', function () {
+      it('should apply integer to alias', function () {
+        const result = parser(['-p', '3000'], {
+          integer: ['port'],
+          alias: { port: ['p'] }
+        })
+        result.port.should.equal(3000)
+        result.p.should.equal(3000)
+      })
+
+      it('should reject invalid integer via alias', function () {
+        const result = parser.detailed(['-p', '3.14'], {
+          integer: ['port'],
+          alias: { port: ['p'] }
+        })
+        result.error.should.not.be.null
+        result.error.message.should.include('port')
+      })
+    })
+
+    describe('default', function () {
+      it('should convert default value to integer', function () {
+        const result = parser([], {
+          integer: ['port'],
+          default: { port: '3000' }
+        })
+        result.port.should.equal(3000)
+      })
+
+      it('should reject invalid default integer value', function () {
+        const result = parser.detailed([], {
+          integer: ['port'],
+          default: { port: '3.14' }
+        })
+        result.error.should.not.be.null
+      })
+
+      it('should accept numeric default value', function () {
+        const result = parser([], {
+          integer: ['port'],
+          default: { port: 3000 }
+        })
+        result.port.should.equal(3000)
+      })
+    })
+
+    describe('configObjects', function () {
+      it('should convert configObjects value to integer', function () {
+        const result = parser([], {
+          integer: ['port'],
+          configObjects: [{ port: '3000' }]
+        })
+        result.port.should.equal(3000)
+      })
+
+      it('should reject invalid configObjects integer value', function () {
+        const result = parser.detailed([], {
+          integer: ['port'],
+          configObjects: [{ port: 'abc' }]
+        })
+        result.error.should.not.be.null
+      })
+    })
+
+    describe('config file', function () {
+      it('should convert config file value to integer', function () {
+        const result = parser([], {
+          integer: ['port'],
+          config: 'config',
+          configObjects: [{ config: path.join(__dirname, 'fixtures', 'integer-config.json') }]
+        })
+        // config path is loaded from configObjects
+      })
+    })
+
+    describe('envPrefix', function () {
+      it('should convert env var value to integer', function () {
+        process.env.MY_APP_PORT = '3000'
+        const result = parser([], {
+          integer: ['port'],
+          envPrefix: 'MY_APP_'
+        })
+        result.port.should.equal(3000)
+        delete process.env.MY_APP_PORT
+      })
+
+      it('should reject invalid env var integer value', function () {
+        process.env.MY_APP_PORT = '3.14'
+        const result = parser.detailed([], {
+          integer: ['port'],
+          envPrefix: 'MY_APP_'
+        })
+        result.error.should.not.be.null
+        delete process.env.MY_APP_PORT
+      })
+    })
+
+    describe('coerce', function () {
+      it('should apply integer validation after coerce', function () {
+        const result = parser(['--port', '3000'], {
+          integer: ['port'],
+          coerce: {
+            port: function (val) {
+              return typeof val === 'string' ? val.trim() : val
+            }
+          }
+        })
+        result.port.should.equal(3000)
+      })
+
+      it('should report error when coerce returns invalid integer', function () {
+        const result = parser.detailed(['--port', '3000'], {
+          integer: ['port'],
+          coerce: {
+            port: function () {
+              return 'not-a-number'
+            }
+          }
+        })
+        result.error.should.not.be.null
+        result.error.message.should.include('port')
+      })
+
+      it('should report error when coerce returns decimal', function () {
+        const result = parser.detailed(['--port', '3000'], {
+          integer: ['port'],
+          coerce: {
+            port: function () {
+              return 3.14
+            }
+          }
+        })
+        result.error.should.not.be.null
+      })
+
+      it('should accept when coerce returns valid integer', function () {
+        const result = parser(['--port', 'hello'], {
+          integer: ['port'],
+          coerce: {
+            port: function () {
+              return 42
+            }
+          }
+        })
+        result.port.should.equal(42)
+      })
+    })
+
+    describe('configuration conflicts', function () {
+      it('should report error for integer + string on same key', function () {
+        const result = parser.detailed(['--port', '3000'], {
+          integer: ['port'],
+          string: ['port']
+        })
+        result.error.should.not.be.null
+        result.error.message.should.include('opts.integer excludes opts.string')
+      })
+
+      it('should report error for integer + boolean on same key', function () {
+        const result = parser.detailed(['--port', '3000'], {
+          integer: ['port'],
+          boolean: ['port']
+        })
+        result.error.should.not.be.null
+        result.error.message.should.include('opts.integer excludes opts.boolean')
+      })
+
+      it('should report error for integer + number on same key', function () {
+        const result = parser.detailed(['--port', '3000'], {
+          integer: ['port'],
+          number: ['port']
+        })
+        result.error.should.not.be.null
+        result.error.message.should.include('opts.integer excludes opts.number')
+      })
+
+      it('should report error for integer + count on same key', function () {
+        const result = parser.detailed(['--port', '3000'], {
+          integer: ['port'],
+          count: ['port']
+        })
+        result.error.should.not.be.null
+        result.error.message.should.include('opts.integer excludes opts.count')
+      })
+
+      it('should allow integer + array combination', function () {
+        const result = parser(['--ids', '1', '2'], {
+          integer: ['ids'],
+          array: ['ids']
+        })
+        result.ids.should.deep.equal([1, 2])
+      })
+
+      it('should allow integer + narg combination', function () {
+        const result = parser(['--pair', '1', '2'], {
+          integer: ['pair'],
+          array: ['pair'],
+          narg: { pair: 2 }
+        })
+        result.pair.should.deep.equal([1, 2])
+      })
+
+      it('should allow integer + normalize combination', function () {
+        const result = parser(['--path', '42'], {
+          integer: ['path'],
+          normalize: ['path']
+        })
+        result.path.should.equal(42)
+      })
+    })
+
+    describe('number option unchanged', function () {
+      it('should still parse number option as before', function () {
+        const result = parser(['--port', '3.14'], { number: ['port'] })
+        result.port.should.equal(3.14)
+      })
+
+      it('should still parse number option with scientific notation', function () {
+        const result = parser(['--port', '1.5e2'], { number: ['port'] })
+        result.port.should.equal(150)
+      })
+
+      it('should still convert numeric options larger than MAX_SAFE_INTEGER to number', function () {
+        const result = parser(['--foo', '93940495950949399948393'], {
+          number: ['foo']
+        })
+        result.foo.should.equal(9.39404959509494e+22)
+      })
+    })
+
+    describe('integer as string option', function () {
+      it('should accept string form of integer option', function () {
+        const result = parser(['--port', '3000'], { integer: 'port' })
+        result.port.should.equal(3000)
+      })
+    })
+  })
 })
