@@ -4142,6 +4142,252 @@ describe('yargs-parser', function () {
   //   delete process.env.YARGS_MIN_NODE_VERSION
   // })
 
+  describe('prototype pollution hardening', () => {
+    function checkNoPrototypePollution () {
+      Object.prototype.should.not.have.property('__proto__')
+      Object.prototype.should.not.have.property('___proto___')
+      Object.prototype.should.not.have.property('constructor')
+      Object.prototype.should.not.have.property('___constructor___')
+      Object.prototype.should.not.have.property('prototype')
+      Object.prototype.should.not.have.property('___prototype___')
+      Object.prototype.should.not.have.property('polluted')
+      Object.prototype.should.not.have.property('x')
+      Object.prototype.should.not.have.property('bar')
+      Object.prototype.should.not.have.property('foo')
+      Object.prototype.should.not.have.property('y')
+      Array.prototype.should.not.have.property('polluted')
+      Array.prototype.should.not.have.property('constructor')
+      Array.prototype.should.not.have.property('___constructor___')
+      Function.prototype.should.not.have.property('polluted')
+      Function.prototype.should.not.have.property('constructor')
+      Function.prototype.should.not.have.property('___constructor___')
+    }
+
+    it('should sanitize __proto__, constructor, prototype from CLI args', function () {
+      const argv = parser([
+        '--__proto__.polluted', 'true',
+        '--constructor.polluted', 'true',
+        '--prototype.polluted', 'true',
+        '--a.__proto__.x', '1',
+        '--a.constructor.x', '2',
+        '--a.prototype.x', '3'
+      ])
+      checkNoPrototypePollution()
+      argv.should.have.property('___proto___').that.deep.equals({ polluted: 'true' })
+      argv.should.have.property('___constructor___').that.deep.equals({ polluted: 'true' })
+      argv.should.have.property('___prototype___').that.deep.equals({ polluted: 'true' })
+      argv.should.have.property('a').that.deep.equals({
+        ___proto___: { x: 1 },
+        ___constructor___: { x: 2 },
+        ___prototype___: { x: 3 }
+      })
+    })
+
+    it('should sanitize dangerous keys from default option', function () {
+      const argv = parser([], {
+        default: {
+          '__proto__.polluted': 'yes',
+          'constructor.polluted': 'yes',
+          'prototype.polluted': 'yes',
+          '___proto___.safe': 'ok'
+        }
+      })
+      checkNoPrototypePollution()
+      argv.should.have.property('___proto___').that.deep.equals({ polluted: 'yes', safe: 'ok' })
+      argv.should.have.property('___constructor___').that.deep.equals({ polluted: 'yes' })
+      argv.should.have.property('___prototype___').that.deep.equals({ polluted: 'yes' })
+    })
+
+    it('should sanitize dangerous keys from configObjects', function () {
+      const argv = parser([], {
+        configObjects: [{
+          '__proto__': { polluted: 'yes' },
+          'constructor': { polluted: 'yes' },
+          'prototype': { polluted: 'yes' },
+          'a': {
+            '__proto__': { x: 1 },
+            'constructor': { x: 2 },
+            'safe': 'ok'
+          }
+        }]
+      })
+      checkNoPrototypePollution()
+      argv.should.have.property('___proto___').that.deep.equals({ polluted: 'yes' })
+      argv.should.have.property('___constructor___').that.deep.equals({ polluted: 'yes' })
+      argv.should.have.property('___prototype___').that.deep.equals({ polluted: 'yes' })
+      argv.should.have.property('a').that.deep.equals({
+        ___proto___: { x: 1 },
+        ___constructor___: { x: 2 },
+        safe: 'ok'
+      })
+    })
+
+    it('should sanitize dangerous keys from config file', function () {
+      const argv = parser(['--config', './test/fixtures/config.json'], {
+        config: { config: true }
+      })
+      checkNoPrototypePollution()
+      // config.json has nested __proto__ objects, they should be sanitized
+      argv.should.not.have.property('__proto__')
+    })
+
+    it('should sanitize dangerous keys from alias mapping', function () {
+      // Test: safe alias pointing to dangerous key
+      const argv1 = parser(['--safe', 'value'], {
+        alias: { safe: ['__proto__.x'] }
+      })
+      checkNoPrototypePollution()
+      argv1.should.have.property('safe', 'value')
+      argv1.should.have.property('___proto___').that.deep.equals({ x: 'value' })
+
+      // Test: dangerous key aliasing to safe key
+      const argv2 = parser(['--__proto__', 'value'], {
+        alias: { '__proto__': ['safe'] }
+      })
+      checkNoPrototypePollution()
+      argv2.should.have.property('___proto___', 'value')
+      argv2.should.have.property('safe', 'value')
+    })
+
+    it('should sanitize dangerous keys in bidirectional alias mapping', function () {
+      const argv = parser(['--a', 'value'], {
+        alias: {
+          'a': ['__proto__.b'],
+          '__proto__.c': ['d']
+        }
+      })
+      checkNoPrototypePollution()
+      argv.should.have.property('a', 'value')
+      argv.should.have.property('___proto___').that.deep.equals({ b: 'value', c: 'd' })
+      argv.should.have.property('d', 'value')
+    })
+
+    it('should sanitize dangerous keys from camelCase alias expansion', function () {
+      const argv = parser(['--constructor-prototype', 'value'], {
+        configuration: { 'camel-case-expansion': true }
+      })
+      checkNoPrototypePollution()
+      argv.should.have.property('___constructor___prototype', 'value')
+      argv.should.have.property('constructorPrototype', 'value')
+    })
+
+    it('should handle dot-notation=false with dangerous keys', function () {
+      const argv = parser(['--constructor.prototype.x', 'value'], {
+        configuration: { 'dot-notation': false }
+      })
+      checkNoPrototypePollution()
+      // With dot-notation=false, the entire string is treated as a single key
+      argv.should.have.property('___constructor___.x', 'value')
+    })
+
+    it('should sanitize dangerous keys from array/narg options', function () {
+      const argv = parser([
+        '--__proto__', 'a', 'b', 'c',
+        '--narg-test', 'x', 'y'
+      ], {
+        array: ['__proto__'],
+        narg: { 'constructor.x': 2 }
+      })
+      checkNoPrototypePollution()
+      argv.should.have.property('___proto___').that.deep.equals(['a', 'b', 'c'])
+      argv.should.have.property('___constructor___').that.deep.equals({ x: ['x', 'y'] })
+    })
+
+    it('should sanitize dangerous keys from coerce callback', function () {
+      const argv = parser(['--__proto__', 'value'], {
+        coerce: { '__proto__': (val) => val.toUpperCase() }
+      })
+      checkNoPrototypePollution()
+      argv.should.have.property('___proto___', 'VALUE')
+    })
+
+    it('should sanitize dangerous keys from count option', function () {
+      const argv = parser(['--__proto__', '--__proto__', '--__proto__'], {
+        count: ['__proto__']
+      })
+      checkNoPrototypePollution()
+      argv.should.have.property('___proto___', 3)
+    })
+
+    it('should sanitize dangerous keys from combine-arrays', function () {
+      const argv = parser([
+        '--__proto__', 'a',
+        '--__proto__', 'b'
+      ], {
+        array: ['__proto__'],
+        configuration: { 'combine-arrays': true }
+      })
+      checkNoPrototypePollution()
+      argv.should.have.property('___proto___').that.deep.equals(['a', 'b'])
+    })
+
+    it('should sanitize dangerous keys from multiple nested segments', function () {
+      const argv = parser([
+        '--a.__proto__.constructor.prototype.x', 'value'
+      ])
+      checkNoPrototypePollution()
+      argv.should.have.property('a').that.deep.equals({
+        ___proto___: {
+          ___constructor___: {
+            ___prototype___: { x: 'value' }
+          }
+        }
+      })
+    })
+
+    it('should not pollute prototype via configObjects with nested dangerous objects', function () {
+      const configObj = {
+        'a': {
+          '__proto__': { polluted: 'yes' },
+          'b': {
+            'constructor': { polluted: 'yes' },
+            'c': 'safe'
+          }
+        }
+      }
+      const argv = parser([], { configObjects: [configObj] })
+      checkNoPrototypePollution()
+      argv.should.have.property('a').that.deep.equals({
+        ___proto___: { polluted: 'yes' },
+        b: {
+          ___constructor___: { polluted: 'yes' },
+          c: 'safe'
+        }
+      })
+    })
+
+    it('should sanitize dangerous keys in detailed.aliases output', function () {
+      const result = parser(['--a', 'value'], {
+        alias: { 'a': ['__proto__.b'] }
+      })
+      checkNoPrototypePollution()
+      result.aliases.should.have.property('___proto___')
+      result.aliases.should.not.have.property('__proto__')
+    })
+
+    it('should sanitize dangerous keys in detailed.newAliases output', function () {
+      const result = parser(['--constructor-name', 'value'], {
+        configuration: { 'camel-case-expansion': true }
+      })
+      checkNoPrototypePollution()
+      // newAliases should not contain dangerous keys
+      if (result.newAliases['constructorName']) {
+        result.newAliases.should.not.have.property('__proto__')
+        result.newAliases.should.not.have.property('constructor')
+        result.newAliases.should.not.have.property('prototype')
+      }
+    })
+
+    it('should sanitize dangerous keys in detailed.defaulted output', function () {
+      const result = parser([], {
+        default: { '__proto__.x': 1, 'safe': 2 }
+      })
+      checkNoPrototypePollution()
+      result.defaulted.should.have.property('___proto___')
+      result.defaulted.should.not.have.property('__proto__')
+    })
+  })
+
   // Refs: https://github.com/yargs/yargs-parser/issues/386
   describe('perf', () => {
     const i = 100000

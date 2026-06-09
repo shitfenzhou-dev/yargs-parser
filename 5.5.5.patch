@@ -1,0 +1,505 @@
+diff --git a/lib/yargs-parser.ts b/lib/yargs-parser.ts
+index 48a2d0f..5411a8a 100644
+--- a/lib/yargs-parser.ts
++++ b/lib/yargs-parser.ts
+@@ -86,7 +86,13 @@ export class YargsParser {
+       'strip-dashed': false,
+       'unknown-options-as-args': false
+     }, opts.configuration)
+-    const defaults: OptionsDefault = Object.assign(Object.create(null), opts.default)
++    const defaults: OptionsDefault = Object.create(null)
++    // Sanitize default keys to prevent prototype pollution
++    if (opts.default) {
++      for (const key of Object.keys(opts.default)) {
++        defaults[sanitizeKeyPath(key)] = opts.default[key]
++      }
++    }
+     const configObjects = opts.configObjects || []
+     const envPrefix = opts.envPrefix
+     const notFlagsOption = configuration['populate--']
+@@ -112,7 +118,7 @@ export class YargsParser {
+     const negatedBoolean = new RegExp('^--' + configuration['negation-prefix'] + '(.+)')
+ 
+     ;([] as ArrayOption[]).concat(opts.array || []).filter(Boolean).forEach(function (opt) {
+-      const key = typeof opt === 'object' ? opt.key : opt
++      const key = typeof opt === 'object' ? sanitizeKeyPath(opt.key) : sanitizeKeyPath(opt)
+ 
+       // assign to flags[bools|strings|numbers]
+       const assignment: ArrayFlagsKey | undefined = Object.keys(opt).map(function (key) {
+@@ -134,35 +140,35 @@ export class YargsParser {
+     })
+ 
+     ;([] as string[]).concat(opts.boolean || []).filter(Boolean).forEach(function (key) {
+-      flags.bools[key] = true
+-      flags.keys.push(key)
++      flags.bools[sanitizeKeyPath(key)] = true
++      flags.keys.push(sanitizeKeyPath(key))
+     })
+ 
+     ;([] as string[]).concat(opts.string || []).filter(Boolean).forEach(function (key) {
+-      flags.strings[key] = true
+-      flags.keys.push(key)
++      flags.strings[sanitizeKeyPath(key)] = true
++      flags.keys.push(sanitizeKeyPath(key))
+     })
+ 
+     ;([] as string[]).concat(opts.number || []).filter(Boolean).forEach(function (key) {
+-      flags.numbers[key] = true
+-      flags.keys.push(key)
++      flags.numbers[sanitizeKeyPath(key)] = true
++      flags.keys.push(sanitizeKeyPath(key))
+     })
+ 
+     ;([] as string[]).concat(opts.count || []).filter(Boolean).forEach(function (key) {
+-      flags.counts[key] = true
+-      flags.keys.push(key)
++      flags.counts[sanitizeKeyPath(key)] = true
++      flags.keys.push(sanitizeKeyPath(key))
+     })
+ 
+     ;([] as string[]).concat(opts.normalize || []).filter(Boolean).forEach(function (key) {
+-      flags.normalize[key] = true
+-      flags.keys.push(key)
++      flags.normalize[sanitizeKeyPath(key)] = true
++      flags.keys.push(sanitizeKeyPath(key))
+     })
+ 
+     if (typeof opts.narg === 'object') {
+       Object.entries(opts.narg).forEach(([key, value]) => {
+         if (typeof value === 'number') {
+-          flags.nargs[key] = value
+-          flags.keys.push(key)
++          flags.nargs[sanitizeKeyPath(key)] = value
++          flags.keys.push(sanitizeKeyPath(key))
+         }
+       })
+     }
+@@ -170,8 +176,8 @@ export class YargsParser {
+     if (typeof opts.coerce === 'object') {
+       Object.entries(opts.coerce).forEach(([key, value]) => {
+         if (typeof value === 'function') {
+-          flags.coercions[key] = value
+-          flags.keys.push(key)
++          flags.coercions[sanitizeKeyPath(key)] = value
++          flags.keys.push(sanitizeKeyPath(key))
+         }
+       })
+     }
+@@ -179,12 +185,12 @@ export class YargsParser {
+     if (typeof opts.config !== 'undefined') {
+       if (Array.isArray(opts.config) || typeof opts.config === 'string') {
+         ;([] as string[]).concat(opts.config).filter(Boolean).forEach(function (key) {
+-          flags.configs[key] = true
++          flags.configs[sanitizeKeyPath(key)] = true
+         })
+       } else if (typeof opts.config === 'object') {
+         Object.entries(opts.config).forEach(([key, value]) => {
+           if (typeof value === 'boolean' || typeof value === 'function') {
+-            flags.configs[key] = value
++            flags.configs[sanitizeKeyPath(key)] = value
+           }
+         })
+       }
+@@ -192,7 +198,34 @@ export class YargsParser {
+ 
+     // create a lookup table that takes into account all
+     // combinations of aliases: {f: ['foo'], foo: ['f']}
+-    extendAliases(opts.key, aliases, opts.default, flags.arrays)
++    // Sanitize alias keys and values to prevent prototype pollution
++    const sanitizedAliases: Dictionary<string | string[]> = Object.create(null)
++    for (const key of Object.keys(aliases)) {
++      const sanitizedKey = sanitizeKey(key)
++      const aliasValue = aliases[key]
++      if (Array.isArray(aliasValue)) {
++        sanitizedAliases[sanitizedKey] = aliasValue.map(a => sanitizeKeyPath(a))
++      } else {
++        sanitizedAliases[sanitizedKey] = sanitizeKeyPath(aliasValue)
++      }
++    }
++
++    // Sanitize opts.key and opts.default before passing to extendAliases
++    const sanitizedKey: { [key: string]: any } = Object.create(null)
++    if (opts.key) {
++      for (const key of Object.keys(opts.key)) {
++        sanitizedKey[sanitizeKeyPath(key)] = opts.key[key]
++      }
++    }
++
++    const sanitizedDefaultsForAliases: { [key: string]: any } = Object.create(null)
++    if (opts.default) {
++      for (const key of Object.keys(opts.default)) {
++        sanitizedDefaultsForAliases[sanitizeKeyPath(key)] = opts.default[key]
++      }
++    }
++
++    extendAliases(sanitizedKey, sanitizedAliases, sanitizedDefaultsForAliases, flags.arrays)
+ 
+     // apply default values to all aliases.
+     Object.keys(defaults).forEach(function (key) {
+@@ -547,7 +580,7 @@ export class YargsParser {
+     function setArg (key: string, val: any, shouldStripQuotes: boolean = inputIsString): void {
+       if (/-/.test(key) && configuration['camel-case-expansion']) {
+         const alias = key.split('.').map(function (prop) {
+-          return camelCase(prop)
++          return camelCase(sanitizeKey(prop))
+         }).join('.')
+         addNewAlias(key, alias)
+       }
+@@ -696,8 +729,9 @@ export class YargsParser {
+     // it recursively checks nested objects.
+     function setConfigObject (config: { [key: string]: any }, prev?: string): void {
+       Object.keys(config).forEach(function (key) {
++        const sanitizedKey = sanitizeKey(key)
+         const value = config[key]
+-        const fullKey = prev ? prev + '.' + key : key
++        const fullKey = prev ? prev + '.' + sanitizedKey : sanitizedKey
+ 
+         // if the value is an inner object and we have dot-notation
+         // enabled, treat inner objects in config the same as
+@@ -736,7 +770,7 @@ export class YargsParser {
+             if (i === 0) {
+               key = key.substring(prefix.length)
+             }
+-            return camelCase(key)
++            return camelCase(sanitizeKey(key))
+           })
+ 
+           if (((configOnly && flags.configs[keys.join('.')]) || !configOnly) && !hasKey(argv, keys)) {
+@@ -1038,12 +1072,12 @@ export class YargsParser {
+     }
+ 
+     return {
+-      aliases: Object.assign({}, flags.aliases),
++      aliases: sanitizeKeysInObject(flags.aliases),
+       argv: Object.assign(argvReturn, argv),
+       configuration: configuration,
+-      defaulted: Object.assign({}, defaulted),
++      defaulted: sanitizeKeysInObject(defaulted),
+       error: error,
+-      newAliases: Object.assign({}, newAliases)
++      newAliases: sanitizeKeysInObject(newAliases)
+     }
+   }
+ }
+@@ -1057,9 +1091,15 @@ function combineAliases (aliases: Dictionary<string | string[]>): Dictionary<str
+ 
+   // turn alias lookup hash {key: ['alias1', 'alias2']} into
+   // a simple array ['key', 'alias1', 'alias2']
++  // Sanitize keys and alias values to prevent prototype pollution
+   Object.keys(aliases).forEach(function (key) {
++    const sanitizedKey = sanitizeKey(key)
++    const aliasValue = aliases[key]
++    const sanitizedAliases = Array.isArray(aliasValue)
++      ? aliasValue.map(a => sanitizeKeyPath(a))
++      : [sanitizeKeyPath(aliasValue)]
+     aliasArrays.push(
+-      ([] as string[]).concat(aliases[key], key)
++      ([] as string[]).concat(sanitizedAliases, sanitizedKey)
+     )
+   })
+ 
+@@ -1091,7 +1131,7 @@ function combineAliases (aliases: Dictionary<string | string[]>): Dictionary<str
+     })
+     const lastAlias = aliasArray.pop()
+     if (lastAlias !== undefined && typeof lastAlias === 'string') {
+-      combined[lastAlias] = aliasArray
++      combined[sanitizeKey(lastAlias)] = aliasArray.map(a => sanitizeKey(a))
+     }
+   })
+ 
+@@ -1107,11 +1147,37 @@ function increment (orig?: number | undefined): number {
+ 
+ // TODO(bcoe): in the next major version of yargs, switch to
+ // Object.create(null) for dot notation:
++const DANGEROUS_KEYS: Record<string, string> = {
++  '__proto__': '___proto___',
++  'constructor': '___constructor___',
++  'prototype': '___prototype___'
++}
++
+ function sanitizeKey (key: string): string {
+-  if (key === '__proto__') return '___proto___'
++  if (DANGEROUS_KEYS[key] !== undefined) return DANGEROUS_KEYS[key]
+   return key
+ }
+ 
++function sanitizeKeyPath (keyPath: string): string {
++  if (!keyPath) return keyPath
++  const parts = keyPath.split('.')
++  const sanitized = parts.map(p => sanitizeKey(p))
++  // If any part was sanitized, return the joined path
++  if (sanitized.some((s, i) => s !== parts[i])) {
++    return sanitized.join('.')
++  }
++  return keyPath
++}
++
++function sanitizeKeysInObject (obj: { [key: string]: any }): { [key: string]: any } {
++  const result: { [key: string]: any } = Object.create(null)
++  for (const key of Object.keys(obj)) {
++    const sanitizedKey = sanitizeKey(key)
++    result[sanitizedKey] = obj[key]
++  }
++  return result
++}
++
+ function stripQuotes (val: string): string {
+   return (
+     typeof val === 'string' &&
+diff --git a/test/yargs-parser.mjs b/test/yargs-parser.mjs
+index 4c69237..f506702 100644
+--- a/test/yargs-parser.mjs
++++ b/test/yargs-parser.mjs
+@@ -4142,6 +4142,252 @@ describe('yargs-parser', function () {
+   //   delete process.env.YARGS_MIN_NODE_VERSION
+   // })
+ 
++  describe('prototype pollution hardening', () => {
++    function checkNoPrototypePollution () {
++      Object.prototype.should.not.have.property('__proto__')
++      Object.prototype.should.not.have.property('___proto___')
++      Object.prototype.should.not.have.property('constructor')
++      Object.prototype.should.not.have.property('___constructor___')
++      Object.prototype.should.not.have.property('prototype')
++      Object.prototype.should.not.have.property('___prototype___')
++      Object.prototype.should.not.have.property('polluted')
++      Object.prototype.should.not.have.property('x')
++      Object.prototype.should.not.have.property('bar')
++      Object.prototype.should.not.have.property('foo')
++      Object.prototype.should.not.have.property('y')
++      Array.prototype.should.not.have.property('polluted')
++      Array.prototype.should.not.have.property('constructor')
++      Array.prototype.should.not.have.property('___constructor___')
++      Function.prototype.should.not.have.property('polluted')
++      Function.prototype.should.not.have.property('constructor')
++      Function.prototype.should.not.have.property('___constructor___')
++    }
++
++    it('should sanitize __proto__, constructor, prototype from CLI args', function () {
++      const argv = parser([
++        '--__proto__.polluted', 'true',
++        '--constructor.polluted', 'true',
++        '--prototype.polluted', 'true',
++        '--a.__proto__.x', '1',
++        '--a.constructor.x', '2',
++        '--a.prototype.x', '3'
++      ])
++      checkNoPrototypePollution()
++      argv.should.have.property('___proto___').that.deep.equals({ polluted: 'true' })
++      argv.should.have.property('___constructor___').that.deep.equals({ polluted: 'true' })
++      argv.should.have.property('___prototype___').that.deep.equals({ polluted: 'true' })
++      argv.should.have.property('a').that.deep.equals({
++        ___proto___: { x: 1 },
++        ___constructor___: { x: 2 },
++        ___prototype___: { x: 3 }
++      })
++    })
++
++    it('should sanitize dangerous keys from default option', function () {
++      const argv = parser([], {
++        default: {
++          '__proto__.polluted': 'yes',
++          'constructor.polluted': 'yes',
++          'prototype.polluted': 'yes',
++          '___proto___.safe': 'ok'
++        }
++      })
++      checkNoPrototypePollution()
++      argv.should.have.property('___proto___').that.deep.equals({ polluted: 'yes', safe: 'ok' })
++      argv.should.have.property('___constructor___').that.deep.equals({ polluted: 'yes' })
++      argv.should.have.property('___prototype___').that.deep.equals({ polluted: 'yes' })
++    })
++
++    it('should sanitize dangerous keys from configObjects', function () {
++      const argv = parser([], {
++        configObjects: [{
++          '__proto__': { polluted: 'yes' },
++          'constructor': { polluted: 'yes' },
++          'prototype': { polluted: 'yes' },
++          'a': {
++            '__proto__': { x: 1 },
++            'constructor': { x: 2 },
++            'safe': 'ok'
++          }
++        }]
++      })
++      checkNoPrototypePollution()
++      argv.should.have.property('___proto___').that.deep.equals({ polluted: 'yes' })
++      argv.should.have.property('___constructor___').that.deep.equals({ polluted: 'yes' })
++      argv.should.have.property('___prototype___').that.deep.equals({ polluted: 'yes' })
++      argv.should.have.property('a').that.deep.equals({
++        ___proto___: { x: 1 },
++        ___constructor___: { x: 2 },
++        safe: 'ok'
++      })
++    })
++
++    it('should sanitize dangerous keys from config file', function () {
++      const argv = parser(['--config', './test/fixtures/config.json'], {
++        config: { config: true }
++      })
++      checkNoPrototypePollution()
++      // config.json has nested __proto__ objects, they should be sanitized
++      argv.should.not.have.property('__proto__')
++    })
++
++    it('should sanitize dangerous keys from alias mapping', function () {
++      // Test: safe alias pointing to dangerous key
++      const argv1 = parser(['--safe', 'value'], {
++        alias: { safe: ['__proto__.x'] }
++      })
++      checkNoPrototypePollution()
++      argv1.should.have.property('safe', 'value')
++      argv1.should.have.property('___proto___').that.deep.equals({ x: 'value' })
++
++      // Test: dangerous key aliasing to safe key
++      const argv2 = parser(['--__proto__', 'value'], {
++        alias: { '__proto__': ['safe'] }
++      })
++      checkNoPrototypePollution()
++      argv2.should.have.property('___proto___', 'value')
++      argv2.should.have.property('safe', 'value')
++    })
++
++    it('should sanitize dangerous keys in bidirectional alias mapping', function () {
++      const argv = parser(['--a', 'value'], {
++        alias: {
++          'a': ['__proto__.b'],
++          '__proto__.c': ['d']
++        }
++      })
++      checkNoPrototypePollution()
++      argv.should.have.property('a', 'value')
++      argv.should.have.property('___proto___').that.deep.equals({ b: 'value', c: 'd' })
++      argv.should.have.property('d', 'value')
++    })
++
++    it('should sanitize dangerous keys from camelCase alias expansion', function () {
++      const argv = parser(['--constructor-prototype', 'value'], {
++        configuration: { 'camel-case-expansion': true }
++      })
++      checkNoPrototypePollution()
++      argv.should.have.property('___constructor___prototype', 'value')
++      argv.should.have.property('constructorPrototype', 'value')
++    })
++
++    it('should handle dot-notation=false with dangerous keys', function () {
++      const argv = parser(['--constructor.prototype.x', 'value'], {
++        configuration: { 'dot-notation': false }
++      })
++      checkNoPrototypePollution()
++      // With dot-notation=false, the entire string is treated as a single key
++      argv.should.have.property('___constructor___.x', 'value')
++    })
++
++    it('should sanitize dangerous keys from array/narg options', function () {
++      const argv = parser([
++        '--__proto__', 'a', 'b', 'c',
++        '--narg-test', 'x', 'y'
++      ], {
++        array: ['__proto__'],
++        narg: { 'constructor.x': 2 }
++      })
++      checkNoPrototypePollution()
++      argv.should.have.property('___proto___').that.deep.equals(['a', 'b', 'c'])
++      argv.should.have.property('___constructor___').that.deep.equals({ x: ['x', 'y'] })
++    })
++
++    it('should sanitize dangerous keys from coerce callback', function () {
++      const argv = parser(['--__proto__', 'value'], {
++        coerce: { '__proto__': (val) => val.toUpperCase() }
++      })
++      checkNoPrototypePollution()
++      argv.should.have.property('___proto___', 'VALUE')
++    })
++
++    it('should sanitize dangerous keys from count option', function () {
++      const argv = parser(['--__proto__', '--__proto__', '--__proto__'], {
++        count: ['__proto__']
++      })
++      checkNoPrototypePollution()
++      argv.should.have.property('___proto___', 3)
++    })
++
++    it('should sanitize dangerous keys from combine-arrays', function () {
++      const argv = parser([
++        '--__proto__', 'a',
++        '--__proto__', 'b'
++      ], {
++        array: ['__proto__'],
++        configuration: { 'combine-arrays': true }
++      })
++      checkNoPrototypePollution()
++      argv.should.have.property('___proto___').that.deep.equals(['a', 'b'])
++    })
++
++    it('should sanitize dangerous keys from multiple nested segments', function () {
++      const argv = parser([
++        '--a.__proto__.constructor.prototype.x', 'value'
++      ])
++      checkNoPrototypePollution()
++      argv.should.have.property('a').that.deep.equals({
++        ___proto___: {
++          ___constructor___: {
++            ___prototype___: { x: 'value' }
++          }
++        }
++      })
++    })
++
++    it('should not pollute prototype via configObjects with nested dangerous objects', function () {
++      const configObj = {
++        'a': {
++          '__proto__': { polluted: 'yes' },
++          'b': {
++            'constructor': { polluted: 'yes' },
++            'c': 'safe'
++          }
++        }
++      }
++      const argv = parser([], { configObjects: [configObj] })
++      checkNoPrototypePollution()
++      argv.should.have.property('a').that.deep.equals({
++        ___proto___: { polluted: 'yes' },
++        b: {
++          ___constructor___: { polluted: 'yes' },
++          c: 'safe'
++        }
++      })
++    })
++
++    it('should sanitize dangerous keys in detailed.aliases output', function () {
++      const result = parser(['--a', 'value'], {
++        alias: { 'a': ['__proto__.b'] }
++      })
++      checkNoPrototypePollution()
++      result.aliases.should.have.property('___proto___')
++      result.aliases.should.not.have.property('__proto__')
++    })
++
++    it('should sanitize dangerous keys in detailed.newAliases output', function () {
++      const result = parser(['--constructor-name', 'value'], {
++        configuration: { 'camel-case-expansion': true }
++      })
++      checkNoPrototypePollution()
++      // newAliases should not contain dangerous keys
++      if (result.newAliases['constructorName']) {
++        result.newAliases.should.not.have.property('__proto__')
++        result.newAliases.should.not.have.property('constructor')
++        result.newAliases.should.not.have.property('prototype')
++      }
++    })
++
++    it('should sanitize dangerous keys in detailed.defaulted output', function () {
++      const result = parser([], {
++        default: { '__proto__.x': 1, 'safe': 2 }
++      })
++      checkNoPrototypePollution()
++      result.defaulted.should.have.property('___proto___')
++      result.defaulted.should.not.have.property('__proto__')
++    })
++  })
++
+   // Refs: https://github.com/yargs/yargs-parser/issues/386
+   describe('perf', () => {
+     const i = 100000

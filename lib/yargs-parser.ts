@@ -86,7 +86,13 @@ export class YargsParser {
       'strip-dashed': false,
       'unknown-options-as-args': false
     }, opts.configuration)
-    const defaults: OptionsDefault = Object.assign(Object.create(null), opts.default)
+    const defaults: OptionsDefault = Object.create(null)
+    // Sanitize default keys to prevent prototype pollution
+    if (opts.default) {
+      for (const key of Object.keys(opts.default)) {
+        defaults[sanitizeKeyPath(key)] = opts.default[key]
+      }
+    }
     const configObjects = opts.configObjects || []
     const envPrefix = opts.envPrefix
     const notFlagsOption = configuration['populate--']
@@ -112,7 +118,7 @@ export class YargsParser {
     const negatedBoolean = new RegExp('^--' + configuration['negation-prefix'] + '(.+)')
 
     ;([] as ArrayOption[]).concat(opts.array || []).filter(Boolean).forEach(function (opt) {
-      const key = typeof opt === 'object' ? opt.key : opt
+      const key = typeof opt === 'object' ? sanitizeKeyPath(opt.key) : sanitizeKeyPath(opt)
 
       // assign to flags[bools|strings|numbers]
       const assignment: ArrayFlagsKey | undefined = Object.keys(opt).map(function (key) {
@@ -134,35 +140,35 @@ export class YargsParser {
     })
 
     ;([] as string[]).concat(opts.boolean || []).filter(Boolean).forEach(function (key) {
-      flags.bools[key] = true
-      flags.keys.push(key)
+      flags.bools[sanitizeKeyPath(key)] = true
+      flags.keys.push(sanitizeKeyPath(key))
     })
 
     ;([] as string[]).concat(opts.string || []).filter(Boolean).forEach(function (key) {
-      flags.strings[key] = true
-      flags.keys.push(key)
+      flags.strings[sanitizeKeyPath(key)] = true
+      flags.keys.push(sanitizeKeyPath(key))
     })
 
     ;([] as string[]).concat(opts.number || []).filter(Boolean).forEach(function (key) {
-      flags.numbers[key] = true
-      flags.keys.push(key)
+      flags.numbers[sanitizeKeyPath(key)] = true
+      flags.keys.push(sanitizeKeyPath(key))
     })
 
     ;([] as string[]).concat(opts.count || []).filter(Boolean).forEach(function (key) {
-      flags.counts[key] = true
-      flags.keys.push(key)
+      flags.counts[sanitizeKeyPath(key)] = true
+      flags.keys.push(sanitizeKeyPath(key))
     })
 
     ;([] as string[]).concat(opts.normalize || []).filter(Boolean).forEach(function (key) {
-      flags.normalize[key] = true
-      flags.keys.push(key)
+      flags.normalize[sanitizeKeyPath(key)] = true
+      flags.keys.push(sanitizeKeyPath(key))
     })
 
     if (typeof opts.narg === 'object') {
       Object.entries(opts.narg).forEach(([key, value]) => {
         if (typeof value === 'number') {
-          flags.nargs[key] = value
-          flags.keys.push(key)
+          flags.nargs[sanitizeKeyPath(key)] = value
+          flags.keys.push(sanitizeKeyPath(key))
         }
       })
     }
@@ -170,8 +176,8 @@ export class YargsParser {
     if (typeof opts.coerce === 'object') {
       Object.entries(opts.coerce).forEach(([key, value]) => {
         if (typeof value === 'function') {
-          flags.coercions[key] = value
-          flags.keys.push(key)
+          flags.coercions[sanitizeKeyPath(key)] = value
+          flags.keys.push(sanitizeKeyPath(key))
         }
       })
     }
@@ -179,12 +185,12 @@ export class YargsParser {
     if (typeof opts.config !== 'undefined') {
       if (Array.isArray(opts.config) || typeof opts.config === 'string') {
         ;([] as string[]).concat(opts.config).filter(Boolean).forEach(function (key) {
-          flags.configs[key] = true
+          flags.configs[sanitizeKeyPath(key)] = true
         })
       } else if (typeof opts.config === 'object') {
         Object.entries(opts.config).forEach(([key, value]) => {
           if (typeof value === 'boolean' || typeof value === 'function') {
-            flags.configs[key] = value
+            flags.configs[sanitizeKeyPath(key)] = value
           }
         })
       }
@@ -192,7 +198,34 @@ export class YargsParser {
 
     // create a lookup table that takes into account all
     // combinations of aliases: {f: ['foo'], foo: ['f']}
-    extendAliases(opts.key, aliases, opts.default, flags.arrays)
+    // Sanitize alias keys and values to prevent prototype pollution
+    const sanitizedAliases: Dictionary<string | string[]> = Object.create(null)
+    for (const key of Object.keys(aliases)) {
+      const sanitizedKey = sanitizeKey(key)
+      const aliasValue = aliases[key]
+      if (Array.isArray(aliasValue)) {
+        sanitizedAliases[sanitizedKey] = aliasValue.map(a => sanitizeKeyPath(a))
+      } else {
+        sanitizedAliases[sanitizedKey] = sanitizeKeyPath(aliasValue)
+      }
+    }
+
+    // Sanitize opts.key and opts.default before passing to extendAliases
+    const sanitizedKey: { [key: string]: any } = Object.create(null)
+    if (opts.key) {
+      for (const key of Object.keys(opts.key)) {
+        sanitizedKey[sanitizeKeyPath(key)] = opts.key[key]
+      }
+    }
+
+    const sanitizedDefaultsForAliases: { [key: string]: any } = Object.create(null)
+    if (opts.default) {
+      for (const key of Object.keys(opts.default)) {
+        sanitizedDefaultsForAliases[sanitizeKeyPath(key)] = opts.default[key]
+      }
+    }
+
+    extendAliases(sanitizedKey, sanitizedAliases, sanitizedDefaultsForAliases, flags.arrays)
 
     // apply default values to all aliases.
     Object.keys(defaults).forEach(function (key) {
@@ -547,7 +580,7 @@ export class YargsParser {
     function setArg (key: string, val: any, shouldStripQuotes: boolean = inputIsString): void {
       if (/-/.test(key) && configuration['camel-case-expansion']) {
         const alias = key.split('.').map(function (prop) {
-          return camelCase(prop)
+          return camelCase(sanitizeKey(prop))
         }).join('.')
         addNewAlias(key, alias)
       }
@@ -696,8 +729,9 @@ export class YargsParser {
     // it recursively checks nested objects.
     function setConfigObject (config: { [key: string]: any }, prev?: string): void {
       Object.keys(config).forEach(function (key) {
+        const sanitizedKey = sanitizeKey(key)
         const value = config[key]
-        const fullKey = prev ? prev + '.' + key : key
+        const fullKey = prev ? prev + '.' + sanitizedKey : sanitizedKey
 
         // if the value is an inner object and we have dot-notation
         // enabled, treat inner objects in config the same as
@@ -736,7 +770,7 @@ export class YargsParser {
             if (i === 0) {
               key = key.substring(prefix.length)
             }
-            return camelCase(key)
+            return camelCase(sanitizeKey(key))
           })
 
           if (((configOnly && flags.configs[keys.join('.')]) || !configOnly) && !hasKey(argv, keys)) {
@@ -1038,12 +1072,12 @@ export class YargsParser {
     }
 
     return {
-      aliases: Object.assign({}, flags.aliases),
+      aliases: sanitizeKeysInObject(flags.aliases),
       argv: Object.assign(argvReturn, argv),
       configuration: configuration,
-      defaulted: Object.assign({}, defaulted),
+      defaulted: sanitizeKeysInObject(defaulted),
       error: error,
-      newAliases: Object.assign({}, newAliases)
+      newAliases: sanitizeKeysInObject(newAliases)
     }
   }
 }
@@ -1057,9 +1091,15 @@ function combineAliases (aliases: Dictionary<string | string[]>): Dictionary<str
 
   // turn alias lookup hash {key: ['alias1', 'alias2']} into
   // a simple array ['key', 'alias1', 'alias2']
+  // Sanitize keys and alias values to prevent prototype pollution
   Object.keys(aliases).forEach(function (key) {
+    const sanitizedKey = sanitizeKey(key)
+    const aliasValue = aliases[key]
+    const sanitizedAliases = Array.isArray(aliasValue)
+      ? aliasValue.map(a => sanitizeKeyPath(a))
+      : [sanitizeKeyPath(aliasValue)]
     aliasArrays.push(
-      ([] as string[]).concat(aliases[key], key)
+      ([] as string[]).concat(sanitizedAliases, sanitizedKey)
     )
   })
 
@@ -1091,7 +1131,7 @@ function combineAliases (aliases: Dictionary<string | string[]>): Dictionary<str
     })
     const lastAlias = aliasArray.pop()
     if (lastAlias !== undefined && typeof lastAlias === 'string') {
-      combined[lastAlias] = aliasArray
+      combined[sanitizeKey(lastAlias)] = aliasArray.map(a => sanitizeKey(a))
     }
   })
 
@@ -1107,9 +1147,35 @@ function increment (orig?: number | undefined): number {
 
 // TODO(bcoe): in the next major version of yargs, switch to
 // Object.create(null) for dot notation:
+const DANGEROUS_KEYS: Record<string, string> = {
+  '__proto__': '___proto___',
+  'constructor': '___constructor___',
+  'prototype': '___prototype___'
+}
+
 function sanitizeKey (key: string): string {
-  if (key === '__proto__') return '___proto___'
+  if (DANGEROUS_KEYS[key] !== undefined) return DANGEROUS_KEYS[key]
   return key
+}
+
+function sanitizeKeyPath (keyPath: string): string {
+  if (!keyPath) return keyPath
+  const parts = keyPath.split('.')
+  const sanitized = parts.map(p => sanitizeKey(p))
+  // If any part was sanitized, return the joined path
+  if (sanitized.some((s, i) => s !== parts[i])) {
+    return sanitized.join('.')
+  }
+  return keyPath
+}
+
+function sanitizeKeysInObject (obj: { [key: string]: any }): { [key: string]: any } {
+  const result: { [key: string]: any } = Object.create(null)
+  for (const key of Object.keys(obj)) {
+    const sanitizedKey = sanitizeKey(key)
+    result[sanitizedKey] = obj[key]
+  }
+  return result
 }
 
 function stripQuotes (val: string): string {
