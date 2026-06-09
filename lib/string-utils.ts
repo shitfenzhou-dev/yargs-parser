@@ -61,3 +61,31 @@ export function looksLikeNumber (x: null | undefined | number | string): boolean
   if (/^0[^.]/.test(x)) return false
   return /^[-]?(?:\d+(?:\.\d*)?|\.\d+)(e[-+]?\d+)?$/.test(x)
 }
+
+export function looksLikeSafeInteger (x: null | undefined | number | string): boolean {
+  if (x === null || x === undefined) return false
+  // don't treat 0123 as an integer; keep leading zero protection.
+  if (typeof x === 'string' && /^0[^.]/.test(x)) return false
+  if (typeof x === 'string' && /^00[^.]?/.test(x)) return false
+  // hexadecimal.
+  if (typeof x === 'string' && /^-?0x[0-9a-f]+$/i.test(x)) {
+    const n = parseInt(x, 16)
+    return Number.isSafeInteger(n)
+  }
+  // require a plain integer or an integer-valued scientific notation, e.g. "1e3" = 1000.
+  // reject decimals like "3.14" or "1.5e2" or non-digit tails like "abc" or "1e".
+  if (typeof x === 'string') {
+    const plainInteger = /^-?\d+$/
+    const integerScientific = /^-?\d+e[+-]?\d+$/i
+    if (!plainInteger.test(x) && !integerScientific.test(x)) return false
+  }
+  const n = typeof x === 'number' ? x : Number(x)
+  if (!Number.isFinite(n)) return false
+  if (!Number.isSafeInteger(n)) return false
+  if (typeof x === 'string') {
+    // ensure the string actually represents the integer we computed.
+    // this rejects things like "3.14" (already rejected by regex) or "abc".
+    if (!Number.isSafeInteger(Number(x))) return false
+  }
+  return true
+}

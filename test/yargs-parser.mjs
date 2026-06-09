@@ -4143,6 +4143,213 @@ describe('yargs-parser', function () {
   // })
 
   // Refs: https://github.com/yargs/yargs-parser/issues/386
+  describe('integer', () => {
+    it('parses integer values from CLI arguments', function () {
+      const argv = parser(['--port', '3000'], { integer: ['port'] })
+      argv.port.should.be.a('number').and.equal(3000)
+    })
+
+    it('parses integer values via = syntax', function () {
+      const argv = parser(['--port=3000'], { integer: ['port'] })
+      argv.port.should.be.a('number').and.equal(3000)
+    })
+
+    it('parses 1e3 as integer (1000) when option is integer', function () {
+      const argv = parser(['--port', '1e3'], { integer: ['port'] })
+      argv.port.should.be.a('number').and.equal(1000)
+    })
+
+    it('parses hexadecimal 0x10 as integer (16) when option is integer', function () {
+      const argv = parser(['--port', '0x10'], { integer: ['port'] })
+      argv.port.should.be.a('number').and.equal(16)
+    })
+
+    it('parses negative integer', function () {
+      const argv = parser(['--offset', '-5'], { integer: ['offset'] })
+      argv.offset.should.be.a('number').and.equal(-5)
+    })
+
+    it('supports integer: true in array option', function () {
+      const argv = parser(['--ids', '1', '2', '3'], {
+        array: [{ key: 'ids', integer: true }]
+      })
+      argv.ids.should.be.an('array').and.eql([1, 2, 3])
+    })
+
+    it('applies integer coercion to default values', function () {
+      const argv = parser([], {
+        integer: ['port'],
+        default: { port: '3000' }
+      })
+      argv.port.should.be.a('number').and.equal(3000)
+    })
+
+    it('applies integer coercion to configObjects values', function () {
+      const argv = parser([], {
+        integer: ['port'],
+        configObjects: [{ port: '3000' }]
+      })
+      argv.port.should.be.a('number').and.equal(3000)
+    })
+
+    it('applies integer coercion to config file values', function () {
+      const jsonPath = path.resolve(__dirname, './fixtures/integer.json')
+      fs.writeFileSync(jsonPath, JSON.stringify({ port: '3000' }))
+      try {
+        const argv = parser(['--config', jsonPath], {
+          config: ['config'],
+          integer: ['port']
+        })
+        argv.port.should.be.a('number').and.equal(3000)
+      } finally {
+        fs.unlinkSync(jsonPath)
+      }
+    })
+
+    it('applies integer coercion to envPrefix values', function () {
+      process.env.TEST_PORT = '3000'
+      const result = parser([], {
+        envPrefix: 'TEST_',
+        integer: ['port']
+      })
+      result.port.should.be.a('number').and.equal(3000)
+      delete process.env.TEST_PORT
+    })
+
+    it('applies integer with alias; --p and --port return the same', function () {
+      const a = parser(['--p', '3000'], {
+        integer: ['port'],
+        alias: { port: ['p'] }
+      })
+      const b = parser(['--port', '3000'], {
+        integer: ['port'],
+        alias: { port: ['p'] }
+      })
+      a.port.should.be.a('number').and.equal(3000)
+      b.port.should.be.a('number').and.equal(3000)
+    })
+
+    it('rejects decimal fractions (3.14) with error via parser.detailed', function () {
+      const r = parser.detailed(['--port', '3.14'], { integer: ['port'] })
+      expect(r.error).to.not.equal(null)
+      r.error.message.should.match(/Invalid integer/)
+    })
+
+    it('rejects 1.5e2 as integer (not an integer) with error via parser.detailed', function () {
+      const r = parser.detailed(['--port', '1.5e2'], { integer: ['port'] })
+      expect(r.error).to.not.equal(null)
+      r.error.message.should.match(/Invalid integer/)
+    })
+
+    it('rejects non-numeric string "abc" with error via parser.detailed', function () {
+      const r = parser.detailed(['--port', 'abc'], { integer: ['port'] })
+      expect(r.error).to.not.equal(null)
+      r.error.message.should.match(/Invalid integer.*port/)
+    })
+
+    it('rejects malformed "1e" with error via parser.detailed', function () {
+      const r = parser.detailed(['--port', '1e'], { integer: ['port'] })
+      expect(r.error).to.not.equal(null)
+      r.error.message.should.match(/Invalid integer/)
+    })
+
+    it('rejects value beyond Number.MAX_SAFE_INTEGER', function () {
+      const r = parser.detailed(['--port', '9007199254740993'], { integer: ['port'] })
+      expect(r.error).to.not.equal(null)
+    })
+
+    it('does not relax leading-zero protection: "0100" is invalid', function () {
+      const r = parser.detailed(['--port', '0100'], { integer: ['port'] })
+      expect(r.error).to.not.equal(null)
+      r.error.message.should.match(/Invalid integer/)
+    })
+
+    it('does not relax leading-zero protection: "00.1" is invalid', function () {
+      const r = parser.detailed(['--port', '00.1'], { integer: ['port'] })
+      expect(r.error).to.not.equal(null)
+      r.error.message.should.match(/Invalid integer/)
+    })
+
+    it('reports an error when integer and string are configured for the same key', function () {
+      const r = parser.detailed(['--x', '1'], { integer: ['x'], string: ['x'] })
+      expect(r.error).to.not.equal(null)
+      r.error.message.should.match(/opts.integer excludes opts.string/)
+    })
+
+    it('reports an error when integer and boolean are configured for the same key', function () {
+      const r = parser.detailed(['--x', '1'], { integer: ['x'], boolean: ['x'] })
+      expect(r.error).to.not.equal(null)
+      r.error.message.should.match(/opts.integer excludes opts.boolean/)
+    })
+
+    it('reports an error when integer and number are configured for the same key', function () {
+      const r = parser.detailed(['--x', '1'], { integer: ['x'], number: ['x'] })
+      expect(r.error).to.not.equal(null)
+      r.error.message.should.match(/opts.integer excludes opts.number/)
+    })
+
+    it('reports an error when integer and count are configured for the same key', function () {
+      const r = parser.detailed(['--x'], { integer: ['x'], count: ['x'] })
+      expect(r.error).to.not.equal(null)
+      r.error.message.should.match(/opts.integer excludes opts.count/)
+    })
+
+    it('allows integer combined with array and narg', function () {
+      const r = parser(['--ids', '1', '2'], {
+        array: [{ key: 'ids', integer: true }],
+        narg: { ids: 2 }
+      })
+      r.ids.should.be.an('array').and.eql([1, 2])
+      r._.should.eql([])
+    })
+
+    it('calls coerce first, then validates/converts integer; coerce returning non-integer sets error', function () {
+      const r = parser.detailed(['--x', '42'], {
+        integer: ['x'],
+        coerce: {
+          x: function (v) { return v + 0.5 } // returns 42.5
+        }
+      })
+      expect(r.error).to.not.equal(null)
+      r.error.message.should.match(/Invalid integer.*x/)
+    })
+
+    it('coerce returning integer string is then converted to integer number', function () {
+      const r = parser(['--x', '42'], {
+        integer: ['x'],
+        coerce: {
+          x: function (v) { return v } // returns "42" as string
+        }
+      })
+      r.x.should.be.a('number').and.equal(42)
+    })
+
+    it('number option behavior remains unchanged (not affected by integer support)', function () {
+      const r = parser(['--pi', '3.14'], { number: ['pi'] })
+      r.pi.should.be.a('number').and.equal(3.14)
+    })
+
+    it('string option behavior remains unchanged (not affected by integer support)', function () {
+      const r = parser(['--s', '123'], { string: ['s'] })
+      r.s.should.be.a('string').and.equal('123')
+    })
+
+    it('boolean option behavior remains unchanged (not affected by integer support)', function () {
+      const r = parser(['--flag'], { boolean: ['flag'] })
+      r.flag.should.be.a('boolean').and.equal(true)
+    })
+
+    it('count option behavior remains unchanged (not affected by integer support)', function () {
+      const r = parser(['-vvv'], { count: ['v'] })
+      r.v.should.be.a('number').and.equal(3)
+    })
+
+    it('default array option behavior remains unchanged', function () {
+      const r = parser(['--items', 'a', 'b', 'c'], { array: ['items'] })
+      r.items.should.be.an('array').and.eql(['a', 'b', 'c'])
+    })
+  })
+
   describe('perf', () => {
     const i = 100000
     describe('unknown-options-as-args', () => {

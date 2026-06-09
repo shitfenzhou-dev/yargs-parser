@@ -30,7 +30,7 @@ import type {
   YargsParserMixin
 } from './yargs-parser-types.js'
 import { DefaultValuesForTypeKey } from './yargs-parser-types.js'
-import { camelCase, decamelize, looksLikeNumber } from './string-utils.js'
+import { camelCase, decamelize, looksLikeNumber, looksLikeSafeInteger } from './string-utils.js'
 
 let mixin: YargsParserMixin
 export class YargsParser {
@@ -101,6 +101,7 @@ export class YargsParser {
       bools: Object.create(null),
       strings: Object.create(null),
       numbers: Object.create(null),
+      integers: Object.create(null),
       counts: Object.create(null),
       normalize: Object.create(null),
       configs: Object.create(null),
@@ -114,12 +115,13 @@ export class YargsParser {
     ;([] as ArrayOption[]).concat(opts.array || []).filter(Boolean).forEach(function (opt) {
       const key = typeof opt === 'object' ? opt.key : opt
 
-      // assign to flags[bools|strings|numbers]
+      // assign to flags[bools|strings|numbers|integers]
       const assignment: ArrayFlagsKey | undefined = Object.keys(opt).map(function (key) {
         const arrayFlagKeys: Record<string, ArrayFlagsKey> = {
           boolean: 'bools',
           string: 'strings',
-          number: 'numbers'
+          number: 'numbers',
+          integer: 'integers'
         }
         return arrayFlagKeys[key]
       }).filter(Boolean).pop()
@@ -145,6 +147,11 @@ export class YargsParser {
 
     ;([] as string[]).concat(opts.number || []).filter(Boolean).forEach(function (key) {
       flags.numbers[key] = true
+      flags.keys.push(key)
+    })
+
+    ;([] as string[]).concat(opts.integer || []).filter(Boolean).forEach(function (key) {
+      flags.integers[key] = true
       flags.keys.push(key)
     })
 
@@ -640,6 +647,16 @@ export class YargsParser {
     function maybeCoerceNumber (key: string, value: string | number | null | undefined) {
       if (!configuration['parse-positional-numbers'] && key === '_') return value
       if (!checkAllAliases(key, flags.strings) && !checkAllAliases(key, flags.bools) && !Array.isArray(value)) {
+        const isIntegerKey = !!checkAllAliases(key, flags.integers)
+        if (isIntegerKey) {
+          if (looksLikeSafeInteger(value)) {
+            const n = typeof value === 'number' ? value : Number(value)
+            if (Number.isSafeInteger(n)) return n
+          }
+          // report as error from the primary coercion path.
+          reportIntegerError(key, value)
+          return value
+        }
         const shouldCoerceNumber = looksLikeNumber(value) && configuration['parse-numbers'] && (
           Number.isSafeInteger(Math.floor(parseFloat(`${value}`)))
         )
@@ -648,6 +665,11 @@ export class YargsParser {
         }
       }
       return value
+    }
+
+    function reportIntegerError (key: string, value: any) {
+      if (error) return
+      error = Error(__('Invalid integer for %s: %s', key, value))
     }
 
     // set args from config.json file, this should be
@@ -762,6 +784,24 @@ export class YargsParser {
             } catch (err) {
               error = err as Error
             }
+          } else if (checkAllAliases(key, flags.integers)) {
+            // no coerce but still an integer key: re-validate values coming from
+            // defaults/config/env that may not have flowed through processValue.
+            const value = maybeCoerceNumber(key, argv[key])
+            argv[key] = value
+          }
+        }
+      })
+      // second pass: ensure all integer-keyed argv values are integers, including
+      // those populated by applyDefaultsAndAliases (setKey bypasses processValue).
+      Object.keys(argv).forEach(function (key) {
+        if (key === '_' || key === '--') return
+        if (checkAllAliases(key, flags.integers)) {
+          const value = argv[key]
+          if (Array.isArray(value)) {
+            argv[key] = value.map(v => maybeCoerceNumber(key, v))
+          } else if (value !== undefined) {
+            argv[key] = maybeCoerceNumber(key, value)
           }
         }
       })
@@ -1013,6 +1053,7 @@ export class YargsParser {
       let type: DefaultValuesForTypeKey = DefaultValuesForTypeKey.BOOLEAN
       if (checkAllAliases(key, flags.strings)) type = DefaultValuesForTypeKey.STRING
       else if (checkAllAliases(key, flags.numbers)) type = DefaultValuesForTypeKey.NUMBER
+      else if (checkAllAliases(key, flags.integers)) type = DefaultValuesForTypeKey.NUMBER
       else if (checkAllAliases(key, flags.bools)) type = DefaultValuesForTypeKey.BOOLEAN
       else if (checkAllAliases(key, flags.arrays)) type = DefaultValuesForTypeKey.ARRAY
       return type
@@ -1031,6 +1072,23 @@ export class YargsParser {
           return true
         } else if (checkAllAliases(key, flags.nargs)) {
           error = Error(__('Invalid configuration: %s, opts.count excludes opts.narg.', key))
+          return true
+        }
+        return false
+      })
+      // integer keys should not be set as string/boolean/number/count
+      Object.keys(flags.integers).find(key => {
+        if (checkAllAliases(key, flags.strings)) {
+          error = Error(__('Invalid configuration: %s, opts.integer excludes opts.string.', key))
+          return true
+        } else if (checkAllAliases(key, flags.bools)) {
+          error = Error(__('Invalid configuration: %s, opts.integer excludes opts.boolean.', key))
+          return true
+        } else if (checkAllAliases(key, flags.numbers)) {
+          error = Error(__('Invalid configuration: %s, opts.integer excludes opts.number.', key))
+          return true
+        } else if (checkAllAliases(key, flags.counts)) {
+          error = Error(__('Invalid configuration: %s, opts.integer excludes opts.count.', key))
           return true
         }
         return false

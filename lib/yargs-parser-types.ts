@@ -132,6 +132,8 @@ export interface Options {
   string: string | string[];
   /** Keys should be treated as numbers. */
   number: string | string[];
+  /** Keys should be treated as safe integers. */
+  integer: string | string[];
   /** i18n handler, defaults to util.format */
   __: (format: any, ...param: any[]) => string;
   /** alias lookup table defaults */
@@ -170,6 +172,7 @@ export interface Flags {
   bools: BooleanFlag;
   strings: BooleanFlag;
   numbers: BooleanFlag;
+  integers: BooleanFlag;
   counts: BooleanFlag;
   normalize: BooleanFlag;
   configs: ConfigsFlag;
@@ -184,7 +187,7 @@ export type FlagValue = ValueOf<Flag>;
 
 export type FlagsKey = KeyOf<Omit<Flags, 'keys'>>;
 
-export type ArrayFlagsKey = Extract<FlagsKey, 'bools' | 'strings' | 'numbers'>;
+export type ArrayFlagsKey = Extract<FlagsKey, 'bools' | 'strings' | 'numbers' | 'integers'>;
 
 export enum DefaultValuesForTypeKey {
   BOOLEAN = 'boolean',
