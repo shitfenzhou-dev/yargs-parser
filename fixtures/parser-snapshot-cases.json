@@ -1,0 +1,56 @@
+[
+  {
+    "name": "string argv basic",
+    "args": "--name meowmers --count --key value bare",
+    "opts": {}
+  },
+  {
+    "name": "array argv basic",
+    "args": ["--name", "meowmers", "--key", "value", "bare"],
+    "opts": {}
+  },
+  {
+    "name": "alias + camel-case-expansion",
+    "args": ["-n", "meowmers", "--is-ok"],
+    "opts": {
+      "alias": {
+        "name": ["n"],
+        "is-ok": ["i"]
+      }
+    }
+  },
+  {
+    "name": "array + greedy-arrays=false",
+    "args": ["--arr", "foo", "bar", "--arr", "hello", "baz"],
+    "opts": {
+      "array": "arr",
+      "configuration": {
+        "greedy-arrays": false
+      }
+    }
+  },
+  {
+    "name": "populate-- enabled",
+    "args": ["--name=meowmers", "bare", "--", "--not-a-flag", "eek"],
+    "opts": {
+      "configuration": {
+        "populate--": true
+      }
+    }
+  },
+  {
+    "name": "detailed error: count vs array conflict",
+    "args": ["--counter", "--counter", "--counter"],
+    "opts": {
+      "count": ["counter"],
+      "array": ["counter"]
+    },
+    "detailed": true
+  },
+  {
+    "name": "detailed basic",
+    "args": ["--name", "hello", "bare"],
+    "opts": {},
+    "detailed": true
+  }
+]

@@ -27,7 +27,8 @@
     "coverage": "c8 report --check-coverage",
     "precompile": "rimraf build",
     "compile": "tsc",
-    "prepare": "npm run compile"
+    "prepare": "npm run compile",
+    "parser:snapshot": "node scripts/parser-snapshot.mjs fixtures/parser-snapshot-cases.json"
   },
   "repository": {
     "type": "git",
