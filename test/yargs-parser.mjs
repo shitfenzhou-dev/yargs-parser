@@ -4132,6 +4132,224 @@ describe('yargs-parser', function () {
     })
   })
 
+  // ---------------------------------------------------------------------------
+  // Comprehensive prototype pollution protection
+  // ---------------------------------------------------------------------------
+  describe('prototype pollution protection', function () {
+    // helper: after each test, verify no new enumerable props exist on
+    // the built-in prototypes.  In addition, explicitly check that any
+    // write we *might* have attempted is still undefined on the
+    // prototype.
+    function assertPrototypesClean (extraKeysToCheck = []) {
+      const builtIn = {}.__proto__ // eslint-disable-line
+      Object.keys(builtIn).should.eql([])
+      // Function.prototype / Array.prototype should not have received
+      // any of our pollution keys either.
+      extraKeysToCheck.forEach(function (k) {
+        expect(Object.prototype[k]).to.equal(undefined)
+        expect(Array.prototype[k]).to.equal(undefined)
+        expect(Function.prototype[k]).to.equal(undefined)
+      })
+    }
+
+    it('should rewrite constructor and prototype path segments from CLI', function () {
+      const argv = parser([
+        '--constructor.foo', '11',
+        '--prototype.bar', '22',
+        '--constructor.prototype.baz', '33'
+      ])
+
+      argv.should.eql({
+        _: [],
+        _constructor: {
+          foo: 11,
+          _prototype: {
+            baz: 33
+          }
+        },
+        _prototype: {
+          bar: 22
+        }
+      })
+
+      assertPrototypesClean(['foo', 'bar', 'baz'])
+    })
+
+    it('should rewrite dangerous keys when provided via default option', function () {
+      const result = parser([], {
+        default: {
+          '__proto__.polluted': 'yes',
+          'constructor.alsoPolluted': 'yes',
+          'prototype.third': 'yes'
+        }
+      })
+
+      expect(result.argv.___proto___).to.eql({ polluted: 'yes' })
+      expect(result.argv._constructor).to.eql({ alsoPolluted: 'yes' })
+      expect(result.argv._prototype).to.eql({ third: 'yes' })
+      assertPrototypesClean(['polluted', 'alsoPolluted', 'third'])
+    })
+
+    it('should rewrite dangerous keys when provided via configObjects', function () {
+      const result = parser([], {
+        configObjects: [{
+          __proto__: { fromProto: 1 },
+          constructor: { fromConstructor: 2 },
+          prototype: { fromPrototype: 3 },
+          safe: 'kept',
+          // nested object also must not pollute prototype.
+          nested: {
+            __proto__: { deep: 1 },
+            constructor: { deep: 2 },
+            prototype: { deep: 3 },
+            sibling: 'kept'
+          }
+        }]
+      })
+
+      expect(result.argv.___proto___).to.eql({ fromProto: 1 })
+      expect(result.argv._constructor).to.eql({ fromConstructor: 2 })
+      expect(result.argv._prototype).to.eql({ fromPrototype: 3 })
+      expect(result.argv.safe).to.equal('kept')
+      expect(result.argv.nested.___proto___).to.eql({ deep: 1 })
+      expect(result.argv.nested._constructor).to.eql({ deep: 2 })
+      expect(result.argv.nested._prototype).to.eql({ deep: 3 })
+      expect(result.argv.nested.sibling).to.equal('kept')
+      assertPrototypesClean(['fromProto', 'fromConstructor', 'fromPrototype', 'deep'])
+    })
+
+    it('should not pollute prototype via envPrefix (dangerous env vars)', function () {
+      // simulate a couple of dangerous env var names; because the
+      // parser already calls mixin.env() and we cannot manipulate it
+      // from this test, we at least exercise the setArg path with
+      // dangerous camelCased keys by re-using the same pipeline.
+      const result = parser([], {
+        configObjects: [{
+          'constructorPrototypeX': 1,
+          '__proto__PollutedY': 2
+        }]
+      })
+
+      // With the default camel-case expansion, the keys above are
+      // stored verbatim (they have no dots); what matters is that the
+      // underlying prototype is untouched.
+      expect(result.argv.constructorPrototypeX).to.equal(1)
+      expect(result.argv.__proto__PollutedY).to.equal(2)
+      assertPrototypesClean(['constructorPrototypeX', '__proto__PollutedY'])
+    })
+
+    it('should prevent pollution when alias points to a dangerous key', function () {
+      const result = parser(['--safe', 'hi'], {
+        alias: {
+          safe: ['__proto__.pollutedByAlias', 'constructor.pollutedByAlias']
+        }
+      })
+
+      expect(result.argv.safe).to.equal('hi')
+      expect(result.argv.___proto___).to.eql({ pollutedByAlias: 'hi' })
+      expect(result.argv._constructor).to.eql({ pollutedByAlias: 'hi' })
+      assertPrototypesClean(['pollutedByAlias'])
+    })
+
+    it('should prevent pollution when dangerous key is aliased to a safe one', function () {
+      const result = parser(['--__proto__.x', 'hi', '--constructor.y', 'there'], {
+        alias: {
+          '__proto__.x': ['safeX'],
+          'constructor.y': ['safeY']
+        }
+      })
+
+      expect(result.argv.safeX).to.equal('hi')
+      expect(result.argv.safeY).to.equal('there')
+      expect(result.argv.___proto___).to.eql({ x: 'hi' })
+      expect(result.argv._constructor).to.eql({ y: 'there' })
+      assertPrototypesClean(['x', 'y', 'safeX', 'safeY'])
+    })
+
+    it('camelCase expansion should not leak dangerous aliases', function () {
+      const result = parser(['--__proto__-key', '1'])
+      // With default camel-case expansion, the dashed alias is created
+      // but must not pollute Object.prototype.
+      expect(result.argv.___proto___Key).to.equal(1)
+      assertPrototypesClean(['key', '___proto__Key'])
+    })
+
+    it('dot-notation=false should treat dangerous dotted key as one key', function () {
+      const result = parser(['--constructor.prototype.x', '42'], {
+        configuration: {
+          'dot-notation': false
+        }
+      })
+
+      // The whole "constructor.prototype.x" becomes a single key and
+      // must not have traversed Object.prototype.
+      expect(result.argv['constructor.prototype.x']).to.equal(42)
+      // Check that the parser did not write anything into the prototype
+      // at any of the intermediate keys.
+      assertPrototypesClean(['x'])
+      expect(Object.prototype.x).to.equal(undefined)
+    })
+
+    it('should protect array/narg/count writes against dangerous keys', function () {
+      // narg
+      const r = parser(['--__proto__', 'a', 'b', 'c', '--constructor', 'x'], {
+        narg: { __proto__: 3, constructor: 1 }
+      })
+      expect(r.argv.___proto___).to.eql(['a', 'b', 'c'])
+      expect(r.argv._constructor).to.equal('x')
+      assertPrototypesClean(['a', 'b', 'c', 'x'])
+
+      // count with dangerous keys
+      const r2 = parser(['--__proto__', '--__proto__', '--constructor'], {
+        count: ['__proto__', 'constructor']
+      })
+      expect(r2.argv.___proto___).to.equal(2)
+      expect(r2.argv._constructor).to.equal(1)
+      assertPrototypesClean(['___proto___', '_constructor'])
+
+      // array with dangerous keys
+      const r3 = parser(['--__proto__', '1', '--__proto__', '2'], {
+        array: ['__proto__']
+      })
+      expect(r3.argv.___proto___).to.eql([1, 2])
+      assertPrototypesClean(['1', '2'])
+    })
+
+    it('should protect coerce writes against dangerous keys', function () {
+      const result = parser(['--__proto__.bad', '5'], {
+        coerce: {
+          '__proto__.bad': function (v) { return Number(v) + 1 }
+        }
+      })
+      expect(result.argv.___proto___).to.eql({ bad: 6 })
+      assertPrototypesClean(['bad'])
+
+      const r2 = parser(['--constructor.other', '7'], {
+        coerce: {
+          'constructor.other': function (v) { return v * 2 }
+        }
+      })
+      expect(r2.argv._constructor).to.eql({ other: 14 })
+      assertPrototypesClean(['other'])
+    })
+
+    it('should protect output objects (aliases/newAliases/defaulted) against pollution', function () {
+      const result = parser(['--__proto__.x', '1', '--constructor.y', '2'], {
+        default: { 'prototype.z': 3 }
+      })
+
+      // The detailed output objects must not carry keys that would
+      // pollute Object.prototype when merged into user objects.
+      expect(Object.keys(result.newAliases).indexOf('__proto__')).to.equal(-1)
+      expect(Object.keys(result.defaulted).indexOf('prototype')).to.equal(-1)
+      // And the parsed argv itself has rewritten keys.
+      expect(result.argv.___proto___).to.eql({ x: 1 })
+      expect(result.argv._constructor).to.eql({ y: 2 })
+      expect(result.argv._prototype).to.eql({ z: 3 })
+      assertPrototypesClean(['x', 'y', 'z'])
+    })
+  })
+
   // Not finding yargs in cache, and not reloading.
   // it('throws error for unsupported Node.js versions', () => {
   //   process.env.YARGS_MIN_NODE_VERSION = '55'

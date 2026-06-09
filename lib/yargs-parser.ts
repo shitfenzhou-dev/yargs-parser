@@ -197,7 +197,9 @@ export class YargsParser {
     // apply default values to all aliases.
     Object.keys(defaults).forEach(function (key) {
       (flags.aliases[key] || []).forEach(function (alias) {
-        defaults[alias] = defaults[key]
+        // sanitize alias keys to avoid prototype pollution when defaults
+        // are later written via setKey; also sanitize defaults write path here.
+        defaults[sanitizeKey(alias)] = defaults[key]
       })
     })
 
@@ -757,7 +759,10 @@ export class YargsParser {
               const value = maybeCoerceNumber(key, coerce(argv[key]))
               ;(([] as string[]).concat(flags.aliases[key] || [], key)).forEach(ali => {
                 applied.add(ali)
-                argv[ali] = value
+                // Route through setKey so that multi-segment alias keys
+                // (e.g. dangerous "constructor.prototype.x") are consistently
+                // sanitized regardless of dot-notation configuration.
+                setKey(argv, ali.split('.'), value)
               })
             } catch (err) {
               error = err as Error
@@ -796,10 +801,11 @@ export class YargsParser {
       if (!configuration['dot-notation']) keys = [keys.join('.')]
 
       keys.slice(0, -1).forEach(function (key) {
+        key = sanitizeKey(key)
         o = (o[key] || {})
       })
 
-      const key = keys[keys.length - 1]
+      const key = sanitizeKey(keys[keys.length - 1])
 
       if (typeof o !== 'object') return false
       else return key in o
@@ -1109,6 +1115,8 @@ function increment (orig?: number | undefined): number {
 // Object.create(null) for dot notation:
 function sanitizeKey (key: string): string {
   if (key === '__proto__') return '___proto___'
+  if (key === 'constructor') return '_constructor'
+  if (key === 'prototype') return '_prototype'
   return key
 }
 
