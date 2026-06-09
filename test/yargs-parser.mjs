@@ -485,6 +485,91 @@ describe('yargs-parser', function () {
       })
       argv.should.have.property('max', false)
     })
+
+    // --- regression tests for centralized alias manager ---
+    it('should bidirectionally sync values for explicit aliases', function () {
+      const detailed = parser.detailed(['-a', 'xyz'], {
+        alias: { a: ['b'], b: ['c'] }
+      })
+      detailed.argv.a.should.equal('xyz')
+      detailed.argv.b.should.equal('xyz')
+      detailed.argv.c.should.equal('xyz')
+      // the alias group should be closed under transitivity
+      Object.keys(detailed.aliases).should.include.members(['a', 'b', 'c'])
+    })
+
+    it('should generate camel-case / dashed alias pairs via camel-case-expansion', function () {
+      const detailed = parser.detailed(['--option-name', 'hello'], {})
+      detailed.argv.should.have.property('option-name', 'hello')
+      detailed.argv.should.have.property('optionName', 'hello')
+      detailed.newAliases.should.have.property('optionName', true)
+    })
+
+    it('should generate dashed alias from camel-case input via camel-case-expansion', function () {
+      const detailed = parser.detailed(['--optionName', 'hello'], {})
+      detailed.argv.should.have.property('optionName', 'hello')
+      detailed.argv.should.have.property('option-name', 'hello')
+    })
+
+    it('should propagate dot-notation aliases from the top-level key', function () {
+      const argv = parser(['--foo.bar', '42'], {
+        alias: { foo: 'baz' }
+      })
+      argv.foo.bar.should.equal(42)
+      argv.baz.bar.should.equal(42)
+    })
+
+    it('should propagate default values to aliases and track defaulted flag', function () {
+      const detailed = parser.detailed([], {
+        alias: { f: 'foo' },
+        default: { f: 'bar' }
+      })
+      detailed.argv.f.should.equal('bar')
+      detailed.argv.foo.should.equal('bar')
+      detailed.defaulted.should.have.property('f', true)
+      // defaulted is only keyed on the original default key, not on aliases
+      detailed.defaulted.should.not.have.property('foo')
+    })
+
+    it('should strip dashed keys when strip-dashed and camel-case-expansion are enabled', function () {
+      const argv = parser(['--option-name', 'v'], {
+        configuration: {
+          'camel-case-expansion': true,
+          'strip-dashed': true
+        }
+      })
+      argv.should.have.property('optionName', 'v')
+      argv.should.not.have.property('option-name')
+    })
+
+    it('should strip explicitly declared aliases when strip-aliased is set', function () {
+      const argv = parser(['-f', 'value'], {
+        alias: { f: ['foo', 'fubar'] },
+        configuration: { 'strip-aliased': true }
+      })
+      // the canonical key should remain
+      argv.should.have.property('f', 'value')
+      // explicitly declared aliases must be stripped
+      argv.should.not.have.property('foo')
+      argv.should.not.have.property('fubar')
+    })
+
+    it('should combine strip-aliased and strip-dashed correctly', function () {
+      const argv = parser(['--option-name', 'hi'], {
+        alias: { 'option-name': ['opt'] },
+        configuration: {
+          'camel-case-expansion': true,
+          'strip-aliased': true,
+          'strip-dashed': true
+        }
+      })
+      // camel-case alias survives strip-dashed
+      argv.should.have.property('optionName', 'hi')
+      // dashed key removed by strip-dashed
+      argv.should.not.have.property('option-name')
+      // explicit alias removed by strip-aliased
+      argv.should.not.have.property('opt')
+    })
   })
 
   it('should assign data after forward slash to the option before the slash', function () {
