@@ -13,6 +13,17 @@ const require = createRequire(import.meta.url);
 
 should()
 
+function expectNoPrototypePollution (...fields) {
+  fields.forEach(field => {
+    expect(Object.prototype[field]).to.equal(undefined)
+    expect(Array.prototype[field]).to.equal(undefined)
+    expect(Function.prototype[field]).to.equal(undefined)
+    expect(({})[field]).to.equal(undefined)
+    expect([][field]).to.equal(undefined)
+    expect((function () {})[field]).to.equal(undefined)
+  })
+}
+
 describe('yargs-parser', function () {
   it('should parse a "short boolean"', function () {
     const parse = parser(['-b'])
@@ -4112,11 +4123,287 @@ describe('yargs-parser', function () {
     })
   })
 
-  it('should replace the key __proto__ with the key ___proto___', function () {
-    const argv = parser(['-f.__proto__.foo', '99', '-x.y.__proto__.bar', '100', '--__proto__', '200'])
+  describe('prototype pollution hardening', () => {
+    it('rewrites dangerous CLI path segments without polluting prototypes', () => {
+      const argv = parser([
+        '--__proto__.cliProtoField', 'proto',
+        '--constructor.prototype.cliCtorField', 'ctor',
+        '--prototype.cliPrototypeField', 'prototype'
+      ])
+
+      argv.___proto___.cliProtoField.should.equal('proto')
+      argv.___constructor___.___prototype___.cliCtorField.should.equal('ctor')
+      argv.___prototype___.cliPrototypeField.should.equal('prototype')
+      expectNoPrototypePollution('cliProtoField', 'cliCtorField', 'cliPrototypeField')
+    })
+
+    it('rewrites dangerous default keys and reports them consistently in defaulted', () => {
+      const parsed = parser.detailed([], {
+        default: {
+          '__proto__.defaultProtoField': 'proto',
+          'constructor.prototype.defaultCtorField': 'ctor',
+          'prototype.defaultPrototypeField': 'prototype'
+        }
+      })
+
+      parsed.argv.___proto___.defaultProtoField.should.equal('proto')
+      parsed.argv.___constructor___.___prototype___.defaultCtorField.should.equal('ctor')
+      parsed.argv.___prototype___.defaultPrototypeField.should.equal('prototype')
+      parsed.defaulted.should.deep.equal({
+        '___proto___.defaultProtoField': true,
+        '___constructor___.___prototype___.defaultCtorField': true,
+        '___prototype___.defaultPrototypeField': true
+      })
+      expectNoPrototypePollution('defaultProtoField', 'defaultCtorField', 'defaultPrototypeField')
+    })
+
+    it('rewrites dangerous config object paths and preserves safe siblings and array objects', () => {
+      const argv = parser([], {
+        configObjects: [{
+          safe: 'kept',
+          constructor: {
+            prototype: {
+              configObjectCtorField: 'ctor'
+            },
+            safeSibling: 'still-here'
+          },
+          __proto__: {
+            configObjectProtoField: 'proto'
+          },
+          items: [{
+            prototype: {
+              arrayObjectPrototypeField: 'array'
+            },
+            keep: 'value'
+          }]
+        }]
+      })
+
+      argv.safe.should.equal('kept')
+      argv.___constructor___.safeSibling.should.equal('still-here')
+      argv.___constructor___.___prototype___.configObjectCtorField.should.equal('ctor')
+      argv.___proto___.configObjectProtoField.should.equal('proto')
+      argv.items.should.deep.equal([{
+        ___prototype___: {
+          arrayObjectPrototypeField: 'array'
+        },
+        keep: 'value'
+      }])
+      expectNoPrototypePollution('configObjectCtorField', 'configObjectProtoField', 'arrayObjectPrototypeField')
+    })
+
+    it('rewrites dangerous config file paths and preserves safe siblings and array objects', () => {
+      const tempConfigPath = path.join(__dirname, 'fixtures', 'prototype-pollution.config.json')
+      fs.writeFileSync(tempConfigPath, JSON.stringify({
+        safe: 'kept',
+        constructor: {
+          prototype: {
+            configFileCtorField: 'ctor'
+          },
+          safeSibling: 'still-here'
+        },
+        __proto__: {
+          configFileProtoField: 'proto'
+        },
+        items: [{
+          constructor: {
+            prototype: {
+              configFileArrayField: 'array'
+            }
+          },
+          keep: 'value'
+        }]
+      }))
+
+      try {
+        const argv = parser(['--settings', tempConfigPath], {
+          config: 'settings'
+        })
+
+        argv.safe.should.equal('kept')
+        argv.___constructor___.safeSibling.should.equal('still-here')
+        argv.___constructor___.___prototype___.configFileCtorField.should.equal('ctor')
+        argv.___proto___.configFileProtoField.should.equal('proto')
+        argv.items.should.deep.equal([{
+          ___constructor___: {
+            ___prototype___: {
+              configFileArrayField: 'array'
+            }
+          },
+          keep: 'value'
+        }])
+        expectNoPrototypePollution('configFileCtorField', 'configFileProtoField', 'configFileArrayField')
+      } finally {
+        fs.unlinkSync(tempConfigPath)
+      }
+    })
+
+    it('rewrites dangerous env keys when using envPrefix', () => {
+      const previousEnv = {
+        APP___proto____envProtoField: process.env.APP___proto____envProtoField,
+        APP_constructor__prototype__envCtorField: process.env.APP_constructor__prototype__envCtorField,
+        APP_prototype__envPrototypeField: process.env.APP_prototype__envPrototypeField
+      }
+
+      process.env.APP___proto____envProtoField = 'proto'
+      process.env.APP_constructor__prototype__envCtorField = 'ctor'
+      process.env.APP_prototype__envPrototypeField = 'prototype'
+
+      try {
+        const argv = parser([], {
+          envPrefix: 'APP_'
+        })
+
+        argv.___proto___.envProtoField.should.equal('proto')
+        argv.___constructor___.___prototype___.envCtorField.should.equal('ctor')
+        argv.___prototype___.envPrototypeField.should.equal('prototype')
+        expectNoPrototypePollution('envProtoField', 'envCtorField', 'envPrototypeField')
+      } finally {
+        Object.entries(previousEnv).forEach(([key, value]) => {
+          if (value === undefined) delete process.env[key]
+          else process.env[key] = value
+        })
+      }
+    })
+
+    it('keeps alias mappings safe in both directions', () => {
+      const argv = parser([
+        '--safe', '1',
+        '--__proto__.dangerToSafe', '2'
+      ], {
+        alias: {
+          safe: ['__proto__.aliasToDanger'],
+          '__proto__.dangerToSafe': ['safeDestination']
+        }
+      })
+
+      argv.safe.should.equal(1)
+      argv.___proto___.aliasToDanger.should.equal(1)
+      argv.safeDestination.should.equal(2)
+      argv.___proto___.dangerToSafe.should.equal(2)
+      expectNoPrototypePollution('aliasToDanger', 'dangerToSafe')
+    })
+
+    it('keeps camel-case aliases and detailed alias output consistent for dangerous keys', () => {
+      const parsed = parser.detailed(['--constructor.prototype.camel-case-field', 'value'], {
+        alias: {
+          'constructor.prototype.camel-case-field': ['ctor-safe']
+        }
+      })
+
+      parsed.argv.___constructor___.___prototype___['camel-case-field'].should.equal('value')
+      parsed.argv.___constructor___.___prototype___.camelCaseField.should.equal('value')
+      parsed.aliases['___constructor___.___prototype___.camel-case-field'].should.include('___constructor___.___prototype___.camelCaseField')
+      expect(parsed.aliases['constructor.prototype.camel-case-field']).to.equal(undefined)
+      parsed.newAliases.should.have.property('___constructor___.___prototype___.camelCaseField', true)
+      expectNoPrototypePollution('camelCaseField')
+    })
+
+    it('treats dotted dangerous keys as literal keys when dot-notation is disabled', () => {
+      const argv = parser([
+        '--constructor.prototype.literalCtorField', 'ctor',
+        '--__proto__.literalProtoField', 'proto'
+      ], {
+        configuration: {
+          'dot-notation': false
+        }
+      })
+
+      argv['constructor.prototype.literalCtorField'].should.equal('ctor')
+      argv['__proto__.literalProtoField'].should.equal('proto')
+      expect(argv.___constructor___).to.equal(undefined)
+      expect(argv.___proto___).to.equal(undefined)
+      expectNoPrototypePollution('literalCtorField', 'literalProtoField')
+    })
+
+    it('keeps array combination safe when array values contain nested dangerous objects', () => {
+      const argv = parser(['--constructor.prototype.arrayField', 'cli'], {
+        array: ['constructor.prototype.arrayField'],
+        configObjects: [{
+          constructor: {
+            prototype: {
+              arrayField: [{
+                prototype: {
+                  arrayNestedPrototypeField: 'nested'
+                },
+                keep: 'value'
+              }]
+            }
+          }
+        }],
+        configuration: {
+          'combine-arrays': true
+        }
+      })
+
+      argv.___constructor___.___prototype___.arrayField.should.deep.equal([
+        'cli',
+        {
+          ___prototype___: {
+            arrayNestedPrototypeField: 'nested'
+          },
+          keep: 'value'
+        }
+      ])
+      expectNoPrototypePollution('arrayField', 'arrayNestedPrototypeField')
+    })
+
+    it('keeps nargs safe for dangerous nested keys', () => {
+      const argv = parser(['--constructor.prototype.nargField', 'apple', 'banana'], {
+        narg: {
+          'constructor.prototype.nargField': 2
+        }
+      })
+
+      argv.___constructor___.___prototype___.nargField.should.deep.equal(['apple', 'banana'])
+      expectNoPrototypePollution('nargField')
+    })
+
+    it('sanitizes coerced values before writing them back', () => {
+      const argv = parser(['--prototype.coerceField', 'value'], {
+        coerce: {
+          'prototype.coerceField': () => ({
+            constructor: {
+              prototype: {
+                coerceNestedField: 'nested'
+              }
+            },
+            keep: 'value'
+          })
+        }
+      })
+
+      argv.___prototype___.coerceField.should.deep.equal({
+        ___constructor___: {
+          ___prototype___: {
+            coerceNestedField: 'nested'
+          }
+        },
+        keep: 'value'
+      })
+      expectNoPrototypePollution('coerceField', 'coerceNestedField')
+    })
+  })
+
+  it('should replace dangerous path segments with stable safe keys', function () {
+    const argv = parser([
+      '-f.__proto__.foo', '99',
+      '-x.y.__proto__.bar', '100',
+      '--__proto__', '200',
+      '--constructor.prototype.baz', '300',
+      '--prototype.qux', '400'
+    ])
     argv.should.eql({
       _: [],
       ___proto___: 200,
+      ___constructor___: {
+        ___prototype___: {
+          baz: 300
+        }
+      },
+      ___prototype___: {
+        qux: 400
+      },
       f: {
         ___proto___: {
           foo: 99
@@ -4130,6 +4417,7 @@ describe('yargs-parser', function () {
         }
       }
     })
+    expectNoPrototypePollution('foo', 'bar', 'baz', 'qux')
   })
 
   // Not finding yargs in cache, and not reloading.

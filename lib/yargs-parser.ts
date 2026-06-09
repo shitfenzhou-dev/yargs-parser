@@ -64,8 +64,6 @@ export class YargsParser {
     // only strip those extra quotes in processValue if argsInput is a string
     const inputIsString = typeof argsInput === 'string'
 
-    // aliases might have transitive relationships, normalize this.
-    const aliases = combineAliases(Object.assign(Object.create(null), opts.alias))
     const configuration: Configuration = Object.assign({
       'boolean-negation': true,
       'camel-case-expansion': true,
@@ -86,7 +84,8 @@ export class YargsParser {
       'strip-dashed': false,
       'unknown-options-as-args': false
     }, opts.configuration)
-    const defaults: OptionsDefault = Object.assign(Object.create(null), opts.default)
+    const aliases = combineAliases(sanitizeAliasesMap(Object.assign(Object.create(null), opts.alias)))
+    const defaults: OptionsDefault = sanitizeObjectKeys(Object.assign(Object.create(null), opts.default))
     const configObjects = opts.configObjects || []
     const envPrefix = opts.envPrefix
     const notFlagsOption = configuration['populate--']
@@ -112,7 +111,7 @@ export class YargsParser {
     const negatedBoolean = new RegExp('^--' + configuration['negation-prefix'] + '(.+)')
 
     ;([] as ArrayOption[]).concat(opts.array || []).filter(Boolean).forEach(function (opt) {
-      const key = typeof opt === 'object' ? opt.key : opt
+      const key = normalizeKey(typeof opt === 'object' ? opt.key : opt)
 
       // assign to flags[bools|strings|numbers]
       const assignment: ArrayFlagsKey | undefined = Object.keys(opt).map(function (key) {
@@ -134,32 +133,38 @@ export class YargsParser {
     })
 
     ;([] as string[]).concat(opts.boolean || []).filter(Boolean).forEach(function (key) {
+      key = normalizeKey(key)
       flags.bools[key] = true
       flags.keys.push(key)
     })
 
     ;([] as string[]).concat(opts.string || []).filter(Boolean).forEach(function (key) {
+      key = normalizeKey(key)
       flags.strings[key] = true
       flags.keys.push(key)
     })
 
     ;([] as string[]).concat(opts.number || []).filter(Boolean).forEach(function (key) {
+      key = normalizeKey(key)
       flags.numbers[key] = true
       flags.keys.push(key)
     })
 
     ;([] as string[]).concat(opts.count || []).filter(Boolean).forEach(function (key) {
+      key = normalizeKey(key)
       flags.counts[key] = true
       flags.keys.push(key)
     })
 
     ;([] as string[]).concat(opts.normalize || []).filter(Boolean).forEach(function (key) {
+      key = normalizeKey(key)
       flags.normalize[key] = true
       flags.keys.push(key)
     })
 
     if (typeof opts.narg === 'object') {
       Object.entries(opts.narg).forEach(([key, value]) => {
+        key = normalizeKey(key)
         if (typeof value === 'number') {
           flags.nargs[key] = value
           flags.keys.push(key)
@@ -169,6 +174,7 @@ export class YargsParser {
 
     if (typeof opts.coerce === 'object') {
       Object.entries(opts.coerce).forEach(([key, value]) => {
+        key = normalizeKey(key)
         if (typeof value === 'function') {
           flags.coercions[key] = value
           flags.keys.push(key)
@@ -179,10 +185,11 @@ export class YargsParser {
     if (typeof opts.config !== 'undefined') {
       if (Array.isArray(opts.config) || typeof opts.config === 'string') {
         ;([] as string[]).concat(opts.config).filter(Boolean).forEach(function (key) {
-          flags.configs[key] = true
+          flags.configs[normalizeKey(key)] = true
         })
       } else if (typeof opts.config === 'object') {
         Object.entries(opts.config).forEach(([key, value]) => {
+          key = normalizeKey(key)
           if (typeof value === 'boolean' || typeof value === 'function') {
             flags.configs[key] = value
           }
@@ -419,7 +426,7 @@ export class YargsParser {
 
     // for any counts either not in args or without an explicit default, set to 0
     Object.keys(flags.counts).forEach(function (key) {
-      if (!hasKey(argv, key.split('.'))) setArg(key, 0)
+      if (!hasKey(argv, keyToSegments(key))) setArg(key, 0)
     })
 
     // '--' defaults to undefined.
@@ -437,11 +444,40 @@ export class YargsParser {
     if (configuration['strip-aliased']) {
       ;([] as string[]).concat(...Object.keys(aliases).map(k => aliases[k])).forEach(alias => {
         if (configuration['camel-case-expansion'] && alias.includes('-')) {
-          delete argv[alias.split('.').map(prop => camelCase(prop)).join('.')]
+          delete argv[normalizeKey(alias.split('.').map(prop => camelCase(prop)).join('.'))]
         }
 
-        delete argv[alias]
+        delete argv[normalizeKey(alias)]
       })
+    }
+
+    function normalizeKey (key: string): string {
+      return normalizeKeyForConfig(key, configuration['dot-notation'])
+    }
+
+    function keyToSegments (key: string): string[] {
+      return keyToSegmentsForConfig(key, configuration['dot-notation'])
+    }
+
+    function normalizeKeys (keys: string[]): string[] {
+      return normalizeKeysForConfig(keys, configuration['dot-notation'])
+    }
+
+    function sanitizeAliasesMap (input?: Dictionary<string | string[]>): Dictionary<string[]> {
+      const sanitized: Dictionary<string[]> = Object.create(null)
+      Object.keys(input || {}).forEach(key => {
+        const normalizedKey = normalizeKey(key)
+        sanitized[normalizedKey] = ([] as string[]).concat(sanitized[normalizedKey] || [], (input as Dictionary<string | string[]>)[key]).filter(Boolean).map(alias => normalizeKey(alias))
+      })
+      return sanitized
+    }
+
+    function sanitizeObjectKeys<T> (input?: Dictionary<T>): Dictionary<T> {
+      const sanitized: Dictionary<T> = Object.create(null)
+      Object.keys(input || {}).forEach(key => {
+        sanitized[normalizeKey(key)] = (input as Dictionary<T>)[key]
+      })
+      return sanitized
     }
 
     // Push argument into positional array, applying numeric coercion:
@@ -511,10 +547,9 @@ export class YargsParser {
         argsToSet.push(true)
       } else if (isUndefined(next) ||
           (isUndefined(argAfterEqualSign) && /^-/.test(next) && !negative.test(next) && !isUnknownOptionAsArg(next))) {
-        // for keys without value ==> argsToSet remains an empty []
-        // set user default value, if available
-        if (defaults[key] !== undefined) {
-          const defVal = defaults[key]
+        const normalizedKey = normalizeKey(key)
+        if (defaults[normalizedKey] !== undefined) {
+          const defVal = defaults[normalizedKey]
           argsToSet = Array.isArray(defVal) ? defVal : [defVal]
         }
       } else {
@@ -545,44 +580,38 @@ export class YargsParser {
     }
 
     function setArg (key: string, val: any, shouldStripQuotes: boolean = inputIsString): void {
+      key = normalizeKey(key)
+
       if (/-/.test(key) && configuration['camel-case-expansion']) {
-        const alias = key.split('.').map(function (prop) {
+        const alias = normalizeKey(key.split('.').map(function (prop) {
           return camelCase(prop)
-        }).join('.')
+        }).join('.'))
         addNewAlias(key, alias)
       }
 
       const value = processValue(key, val, shouldStripQuotes)
-      const splitKey = key.split('.')
+      const splitKey = keyToSegments(key)
       setKey(argv, splitKey, value)
 
-      // handle populating aliases of the full key
       if (flags.aliases[key]) {
         flags.aliases[key].forEach(function (x) {
-          const keyProperties = x.split('.')
-          setKey(argv, keyProperties, value)
+          setKey(argv, keyToSegments(x), value)
         })
       }
 
-      // handle populating aliases of the first element of the dot-notation key
       if (splitKey.length > 1 && configuration['dot-notation']) {
         ;(flags.aliases[splitKey[0]] || []).forEach(function (x) {
-          let keyProperties = x.split('.')
-
-          // expand alias with nested objects in key
+          let keyProperties = keyToSegments(x)
           const a = ([] as string[]).concat(splitKey)
-          a.shift() // nuke the old key.
+          a.shift()
           keyProperties = keyProperties.concat(a)
 
-          // populate alias only if is not already an alias of the full key
-          // (already populated above)
           if (!(flags.aliases[key] || []).includes(keyProperties.join('.'))) {
             setKey(argv, keyProperties, value)
           }
         })
       }
 
-      // Set normalize getter and setter when key is in 'normalize' but isn't an array
       if (checkAllAliases(key, flags.normalize) && !checkAllAliases(key, flags.arrays)) {
         const keys = [key].concat(flags.aliases[key] || [])
         keys.forEach(function (key) {
@@ -600,6 +629,9 @@ export class YargsParser {
     }
 
     function addNewAlias (key: string, alias: string): void {
+      key = normalizeKey(key)
+      alias = normalizeKey(alias)
+
       if (!(flags.aliases[key] && flags.aliases[key].length)) {
         flags.aliases[key] = [alias]
         newAliases[alias] = true
@@ -698,24 +730,18 @@ export class YargsParser {
       Object.keys(config).forEach(function (key) {
         const value = config[key]
         const fullKey = prev ? prev + '.' + key : key
+        const normalizedFullKey = normalizeKey(fullKey)
 
-        // if the value is an inner object and we have dot-notation
-        // enabled, treat inner objects in config the same as
-        // heavily nested dot notations (foo.bar.apple).
         if (typeof value === 'object' && value !== null && !Array.isArray(value) && configuration['dot-notation']) {
-          // if the value is an object but not an array, check nested object
           setConfigObject(value, fullKey)
         } else {
-          // setting arguments via CLI takes precedence over
-          // values within the config file.
-          if (!hasKey(argv, fullKey.split('.')) || (checkAllAliases(fullKey, flags.arrays) && configuration['combine-arrays'])) {
-            setArg(fullKey, value)
+          if (!hasKey(argv, keyToSegments(normalizedFullKey)) || (checkAllAliases(normalizedFullKey, flags.arrays) && configuration['combine-arrays'])) {
+            setArg(normalizedFullKey, value)
           }
         }
       })
     }
 
-    // set all config objects passed in opts
     function setConfigObjects (): void {
       if (typeof configObjects !== 'undefined') {
         configObjects.forEach(function (configObject) {
@@ -731,16 +757,16 @@ export class YargsParser {
       const env = mixin.env()
       Object.keys(env).forEach(function (envVar) {
         if (prefix === '' || envVar.lastIndexOf(prefix, 0) === 0) {
-          // get array of nested keys and convert them to camel case
           const keys = envVar.split('__').map(function (key, i) {
             if (i === 0) {
               key = key.substring(prefix.length)
             }
             return camelCase(key)
           })
+          const normalizedKey = normalizeKey(keys.join('.'))
 
-          if (((configOnly && flags.configs[keys.join('.')]) || !configOnly) && !hasKey(argv, keys)) {
-            setArg(keys.join('.'), env[envVar])
+          if (((configOnly && flags.configs[normalizedKey]) || !configOnly) && !hasKey(argv, keyToSegments(normalizedKey))) {
+            setArg(normalizedKey, env[envVar])
           }
         }
       })
@@ -749,15 +775,15 @@ export class YargsParser {
     function applyCoercions (argv: Arguments): void {
       let coerce: false | CoerceCallback
       const applied: Set<string> = new Set()
-      Object.keys(argv).forEach(function (key) {
-        if (!applied.has(key)) { // If we haven't already coerced this option via one of its aliases
+      Object.keys(flags.coercions).forEach(function (key) {
+        if (!applied.has(key) && hasKey(argv, keyToSegments(key))) {
           coerce = checkAllAliases(key, flags.coercions)
           if (typeof coerce === 'function') {
             try {
-              const value = maybeCoerceNumber(key, coerce(argv[key]))
+              const value = sanitizeValue(maybeCoerceNumber(key, coerce(getValue(argv, keyToSegments(key)))))
               ;(([] as string[]).concat(flags.aliases[key] || [], key)).forEach(ali => {
                 applied.add(ali)
-                argv[ali] = value
+                assignValue(argv, keyToSegments(ali), value)
               })
             } catch (err) {
               error = err as Error
@@ -769,7 +795,6 @@ export class YargsParser {
 
     function setPlaceholderKeys (argv: Arguments): Arguments {
       flags.keys.forEach((key) => {
-        // don't set placeholder keys for dot notation options 'foo.bar'.
         if (~key.indexOf('.')) return
         if (typeof argv[key] === 'undefined') argv[key] = undefined
       })
@@ -778,74 +803,97 @@ export class YargsParser {
 
     function applyDefaultsAndAliases (obj: { [key: string]: any }, aliases: { [key: string]: string[] }, defaults: { [key: string]: any }, canLog: boolean = false): void {
       Object.keys(defaults).forEach(function (key) {
-        if (!hasKey(obj, key.split('.'))) {
-          setKey(obj, key.split('.'), defaults[key])
+        if (!hasKey(obj, keyToSegments(key))) {
+          setKey(obj, keyToSegments(key), defaults[key])
           if (canLog) defaulted[key] = true
 
           ;(aliases[key] || []).forEach(function (x) {
-            if (hasKey(obj, x.split('.'))) return
-            setKey(obj, x.split('.'), defaults[key])
+            if (hasKey(obj, keyToSegments(x))) return
+            setKey(obj, keyToSegments(x), defaults[key])
           })
         }
       })
     }
 
     function hasKey (obj: { [key: string]: any }, keys: string[]): boolean {
-      let o = obj
+      let o: any = obj
 
-      if (!configuration['dot-notation']) keys = [keys.join('.')]
+      keys = normalizeKeys(keys)
 
       keys.slice(0, -1).forEach(function (key) {
-        o = (o[key] || {})
+        if (typeof o !== 'object' || o === null || !Object.prototype.hasOwnProperty.call(o, key)) {
+          o = undefined
+          return
+        }
+        o = o[key]
       })
 
       const key = keys[keys.length - 1]
 
-      if (typeof o !== 'object') return false
-      else return key in o
+      if (typeof o !== 'object' || o === null) return false
+      return Object.prototype.hasOwnProperty.call(o, key)
+    }
+
+    function getValue (obj: { [key: string]: any }, keys: string[]): any {
+      let o = obj
+
+      keys = normalizeKeys(keys)
+      for (const key of keys) {
+        if (typeof o !== 'object' || o === null) return undefined
+        o = o[key]
+      }
+
+      return o
+    }
+
+    function assignValue (obj: { [key: string]: any }, keys: string[], value: any): void {
+      let o = obj
+
+      keys = normalizeKeys(keys)
+      keys.slice(0, -1).forEach(function (key) {
+        if (typeof o[key] !== 'object' || o[key] === null || Array.isArray(o[key])) {
+          o[key] = {}
+        }
+        o = o[key]
+      })
+
+      o[keys[keys.length - 1]] = sanitizeValue(value)
     }
 
     function setKey (obj: { [key: string]: any }, keys: string[], value: any): void {
       let o = obj
 
-      if (!configuration['dot-notation']) keys = [keys.join('.')]
+      keys = normalizeKeys(keys)
+      value = sanitizeValue(value)
 
       keys.slice(0, -1).forEach(function (key) {
-        // TODO(bcoe): in the next major version of yargs, switch to
-        // Object.create(null) for dot notation:
-        key = sanitizeKey(key)
-
         if (typeof o === 'object' && o[key] === undefined) {
           o[key] = {}
         }
 
-        if (typeof o[key] !== 'object' || Array.isArray(o[key])) {
-          // ensure that o[key] is an array, and that the last item is an empty object.
+        if (typeof o[key] !== 'object' || o[key] === null || Array.isArray(o[key])) {
           if (Array.isArray(o[key])) {
             o[key].push({})
           } else {
             o[key] = [o[key], {}]
           }
 
-          // we want to update the empty object at the end of the o[key] array, so set o to that object
           o = o[key][o[key].length - 1]
         } else {
           o = o[key]
         }
       })
 
-      // TODO(bcoe): in the next major version of yargs, switch to
-      // Object.create(null) for dot notation:
-      const key = sanitizeKey(keys[keys.length - 1])
-
-      const isTypeArray = checkAllAliases(keys.join('.'), flags.arrays)
+      const key = keys[keys.length - 1]
+      const fullKey = keys.join('.')
+      const isTypeArray = checkAllAliases(fullKey, flags.arrays)
       const isValueArray = Array.isArray(value)
       let duplicate = configuration['duplicate-arguments-array']
+      const nargsCount = checkAllAliases(fullKey, flags.nargs)
 
-      // nargs has higher priority than duplicate
-      if (!duplicate && checkAllAliases(key, flags.nargs)) {
+      if (!duplicate && nargsCount !== false) {
         duplicate = true
-        if ((!isUndefined(o[key]) && flags.nargs[key] === 1) || (Array.isArray(o[key]) && o[key].length === flags.nargs[key])) {
+        if ((!isUndefined(o[key]) && nargsCount === 1) || (Array.isArray(o[key]) && o[key].length === nargsCount)) {
           o[key] = undefined
         }
       }
@@ -864,8 +912,8 @@ export class YargsParser {
         o[key] = isValueArray ? value : [value]
       } else if (duplicate && !(
         o[key] === undefined ||
-          checkAllAliases(key, flags.counts) ||
-          checkAllAliases(key, flags.bools)
+          checkAllAliases(fullKey, flags.counts) ||
+          checkAllAliases(fullKey, flags.bools)
       )) {
         o[key] = [o[key], value]
       } else {
@@ -873,30 +921,26 @@ export class YargsParser {
       }
     }
 
-    // extend the aliases list with inferred aliases.
     function extendAliases (...args: Array<{ [key: string]: any } | undefined>) {
       args.forEach(function (obj) {
         Object.keys(obj || {}).forEach(function (key) {
-          // short-circuit if we've already added a key
-          // to the aliases array, for example it might
-          // exist in both 'opts.default' and 'opts.key'.
+          key = normalizeKey(key)
+
           if (flags.aliases[key]) return
 
           flags.aliases[key] = ([] as string[]).concat(aliases[key] || [])
-          // For "--option-name", also set argv.optionName
           flags.aliases[key].concat(key).forEach(function (x) {
             if (/-/.test(x) && configuration['camel-case-expansion']) {
-              const c = camelCase(x)
+              const c = normalizeKey(camelCase(x))
               if (c !== key && flags.aliases[key].indexOf(c) === -1) {
                 flags.aliases[key].push(c)
                 newAliases[c] = true
               }
             }
           })
-          // For "--optionName", also set argv['option-name']
           flags.aliases[key].concat(key).forEach(function (x) {
             if (x.length > 1 && /[A-Z]/.test(x) && configuration['camel-case-expansion']) {
-              const c = decamelize(x, '-')
+              const c = normalizeKey(decamelize(x, '-'))
               if (c !== key && flags.aliases[key].indexOf(c) === -1) {
                 flags.aliases[key].push(c)
                 newAliases[c] = true
@@ -912,13 +956,13 @@ export class YargsParser {
       })
     }
 
-    // return the 1st set flag for any of a key's aliases (or false if no flag set)
     function checkAllAliases (key: string, flag: StringFlag): ValueOf<StringFlag> | false
     function checkAllAliases (key: string, flag: BooleanFlag): ValueOf<BooleanFlag> | false
     function checkAllAliases (key: string, flag: NumberFlag): ValueOf<NumberFlag> | false
     function checkAllAliases (key: string, flag: ConfigsFlag): ValueOf<ConfigsFlag> | false
     function checkAllAliases (key: string, flag: CoercionsFlag): ValueOf<CoercionsFlag> | false
     function checkAllAliases (key: string, flag: Flag): ValueOf<Flag> | false {
+      key = normalizeKey(key)
       const toCheck = ([] as string[]).concat(flags.aliases[key] || [], key)
       const keys = Object.keys(flag)
       const setAlias = toCheck.find(key => keys.includes(key))
@@ -926,6 +970,7 @@ export class YargsParser {
     }
 
     function hasAnyFlag (key: string): boolean {
+      key = normalizeKey(key)
       const flagsKeys = Object.keys(flags) as FlagsKey[]
       const toCheck = ([] as Array<{ [key: string]: any } | string[]>).concat(flagsKeys.map(k => flags[k]))
       return toCheck.some(function (flag) {
@@ -987,6 +1032,7 @@ export class YargsParser {
     // make a best effort to pick a default value
     // for an option based on name and type.
     function defaultValue (key: string) {
+      key = normalizeKey(key)
       if (!checkAllAliases(key, flags.bools) &&
           !checkAllAliases(key, flags.counts) &&
           `${key}` in defaults) {
@@ -1038,12 +1084,12 @@ export class YargsParser {
     }
 
     return {
-      aliases: Object.assign({}, flags.aliases),
+      aliases: copyDictionary(flags.aliases),
       argv: Object.assign(argvReturn, argv),
       configuration: configuration,
-      defaulted: Object.assign({}, defaulted),
+      defaulted: copyDictionary(defaulted),
       error: error,
-      newAliases: Object.assign({}, newAliases)
+      newAliases: copyDictionary(newAliases)
     }
   }
 }
@@ -1105,10 +1151,51 @@ function increment (orig?: number | undefined): number {
   return orig !== undefined ? orig + 1 : 1
 }
 
-// TODO(bcoe): in the next major version of yargs, switch to
-// Object.create(null) for dot notation:
+function copyDictionary<T> (input: Dictionary<T>): Dictionary<T> {
+  const copied: Dictionary<T> = {}
+  Object.keys(input).forEach(key => {
+    copied[sanitizeKey(key)] = input[key]
+  })
+  return copied
+}
+
+function normalizeKeysForConfig (keys: string[], dotNotation: boolean): string[] {
+  return dotNotation ? keys.map(key => sanitizeKey(key)) : [sanitizeKey(keys.join('.'))]
+}
+
+function keyToSegmentsForConfig (key: string, dotNotation: boolean): string[] {
+  return normalizeKeysForConfig(dotNotation ? key.split('.') : [key], dotNotation)
+}
+
+function normalizeKeyForConfig (key: string, dotNotation: boolean): string {
+  return keyToSegmentsForConfig(key, dotNotation).join('.')
+}
+
+function sanitizeValue (value: any): any {
+  if (Array.isArray(value)) {
+    return value.map(item => sanitizeValue(item))
+  }
+
+  if (typeof value === 'object' && value !== null) {
+    const prototype = Object.getPrototypeOf(value)
+    if (prototype !== Object.prototype && prototype !== null) {
+      return value
+    }
+
+    const sanitized: { [key: string]: any } = {}
+    Object.keys(value).forEach(key => {
+      sanitized[sanitizeKey(key)] = sanitizeValue(value[key])
+    })
+    return sanitized
+  }
+
+  return value
+}
+
 function sanitizeKey (key: string): string {
   if (key === '__proto__') return '___proto___'
+  if (key === 'constructor') return '___constructor___'
+  if (key === 'prototype') return '___prototype___'
   return key
 }
 
