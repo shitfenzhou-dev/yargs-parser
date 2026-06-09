@@ -4143,6 +4143,249 @@ describe('yargs-parser', function () {
   // })
 
   // Refs: https://github.com/yargs/yargs-parser/issues/386
+  describe('source priority and refactoring coverage', () => {
+    const jsonPath = path.resolve(__dirname, './fixtures/config.json')
+
+    describe('CLI > env > config > configObjects > default priority', () => {
+      it('CLI overrides env, config, configObjects, and default', function () {
+        process.env.PRI_TEST_X = 'from-env'
+        const result = parser(['--x', 'from-cli'], {
+          envPrefix: 'PRI_TEST',
+          configObjects: [{ x: 'from-configobj' }],
+          default: { x: 'from-default' }
+        })
+        result.x.should.equal('from-cli')
+        delete process.env.PRI_TEST_X
+      })
+
+      it('env overrides config, configObjects, and default when no CLI', function () {
+        process.env.PRI_TEST_X = 'from-env'
+        const result = parser([], {
+          envPrefix: 'PRI_TEST',
+          configObjects: [{ x: 'from-configobj' }],
+          default: { x: 'from-default' }
+        })
+        result.x.should.equal('from-env')
+        delete process.env.PRI_TEST_X
+      })
+
+      it('config overrides configObjects and default when no CLI or env', function () {
+        const result = parser(['--cfg', jsonPath], {
+          config: 'cfg',
+          configObjects: [{ herp: 'from-configobj' }],
+          default: { herp: 'from-default' }
+        })
+        result.herp.should.equal('derp')
+      })
+
+      it('configObjects overrides default when no CLI, env, or config', function () {
+        const result = parser([], {
+          configObjects: [{ x: 'from-configobj' }],
+          default: { x: 'from-default' }
+        })
+        result.x.should.equal('from-configobj')
+      })
+
+      it('default is used when no other source provides the value', function () {
+        const result = parser([], {
+          default: { x: 'from-default' }
+        })
+        result.x.should.equal('from-default')
+      })
+    })
+
+    describe('env providing config path', () => {
+      it('env var can supply config file path', function () {
+        process.env.ECFG_CFG = jsonPath
+        const result = parser([], {
+          envPrefix: 'ECFG',
+          config: 'cfg'
+        })
+        result.should.have.property('herp', 'derp')
+        result.z.should.equal(55)
+        delete process.env.ECFG_CFG
+      })
+
+      it('env-provided config path is used even when default also specifies a config key', function () {
+        process.env.DCFG_CFG = jsonPath
+        const result = parser([], {
+          envPrefix: 'DCFG',
+          config: 'cfg',
+          default: { cfg: 'nonexistent.json' }
+        })
+        result.should.have.property('herp', 'derp')
+        delete process.env.DCFG_CFG
+      })
+    })
+
+    describe('config callback errors', () => {
+      it('config callback returning Error sets detailed.error', function () {
+        const result = parser.detailed(['--cfg', jsonPath], {
+          config: {
+            cfg: function () {
+              return Error('callback-returned-error')
+            }
+          }
+        })
+        result.error.message.should.equal('callback-returned-error')
+      })
+
+      it('config callback throwing Error sets detailed.error', function () {
+        const result = parser.detailed(['--cfg', jsonPath], {
+          config: {
+            cfg: function () {
+              throw Error('callback-threw-error')
+            }
+          }
+        })
+        result.error.message.should.equal('callback-threw-error')
+      })
+    })
+
+    describe('alias + config/default', () => {
+      it('config value propagates to aliases', function () {
+        const result = parser(['--cfg', jsonPath], {
+          config: 'cfg',
+          alias: { z: 'zoom' }
+        })
+        result.z.should.equal(55)
+        result.zoom.should.equal(55)
+      })
+
+      it('default value propagates to aliases', function () {
+        const result = parser([], {
+          default: { kaa: 'abc' },
+          alias: { foo: 'kaa' }
+        })
+        result.kaa.should.equal('abc')
+        result.foo.should.equal('abc')
+      })
+
+      it('configObjects value propagates to aliases', function () {
+        const result = parser([], {
+          configObjects: [{ apple: 'granny' }],
+          alias: { a: 'apple' }
+        })
+        result.apple.should.equal('granny')
+        result.a.should.equal('granny')
+      })
+    })
+
+    describe('dot-notation configObjects', () => {
+      it('nested object in configObject is flattened with dot-notation', function () {
+        const result = parser([], {
+          configObjects: [{
+            db: { host: 'localhost', port: 5432 }
+          }]
+        })
+        result.db.should.deep.equal({ host: 'localhost', port: 5432 })
+      })
+
+      it('dot-notation=false keeps nested keys as-is in configObject', function () {
+        const result = parser([], {
+          configuration: { 'dot-notation': false },
+          configObjects: [{
+            'website.com': { a: 'b', c: 'd' }
+          }]
+        })
+        result['website.com'].should.deep.equal({ a: 'b', c: 'd' })
+      })
+
+      it('CLI dot-notation key overrides nested configObject value', function () {
+        const result = parser(['--db.host', 'remote'], {
+          configObjects: [{
+            db: { host: 'localhost', port: 5432 }
+          }]
+        })
+        result.db.host.should.equal('remote')
+        result.db.port.should.equal(5432)
+      })
+    })
+
+    describe('combine-arrays', () => {
+      it('combines CLI array with config file array when combine-arrays is true', function () {
+        const result = parser(['--foo', 'cli-val'], {
+          config: 'cfg',
+          default: { cfg: jsonPath },
+          array: ['foo'],
+          configuration: { 'combine-arrays': true }
+        })
+        result.foo.should.deep.equal(['cli-val', 'baz'])
+      })
+
+      it('combines CLI array with configObjects array when combine-arrays is true', function () {
+        const result = parser(['--foo', 'cli-val'], {
+          configObjects: [{ foo: ['obj-val'] }],
+          array: ['foo'],
+          configuration: { 'combine-arrays': true }
+        })
+        result.foo.should.deep.equal(['cli-val', 'obj-val'])
+      })
+    })
+
+    describe('normalize array', () => {
+      it('normalizes each path in array from configObjects', function () {
+        const result = parser([], {
+          array: ['a'],
+          normalize: ['a'],
+          configObjects: [{ a: ['bin/../a.txt', 'bin/../b.txt'] }]
+        })
+        result.a.should.deep.equal(['a.txt', 'b.txt'])
+      })
+
+      it('normalizes CLI value when normalize is set', function () {
+        const result = parser(['--a', 'bin/../x.txt'], {
+          normalize: ['a']
+        })
+        result.a.should.equal('x.txt')
+      })
+    })
+
+    describe('envPrefix edge cases', () => {
+      it('envPrefix empty string applies all env vars', function () {
+        process.env.EMPTY_TEST = 'hello'
+        const result = parser([], { envPrefix: '' })
+        result.emptyTest.should.equal('hello')
+        delete process.env.EMPTY_TEST
+      })
+
+      it('envPrefix null applies all env vars', function () {
+        process.env.NULL_TEST = 'world'
+        const result = parser([], { envPrefix: null })
+        result.nullTest.should.equal('world')
+        delete process.env.NULL_TEST
+      })
+
+      it('envPrefix undefined applies no env vars', function () {
+        process.env.UNDEF_TEST = 'nope'
+        const result = parser([], { envPrefix: undefined })
+        expect(result).to.not.have.property('undefTest')
+        delete process.env.UNDEF_TEST
+      })
+    })
+
+    describe('defaulted tracking across sources', () => {
+      it('only tracks defaulted for values from opts.default, not from configObjects', function () {
+        const parsed = parser.detailed('', {
+          default: { foo: 'abc' },
+          configObjects: [{ baz: 'xyz' }]
+        })
+        parsed.argv.baz.should.equal('xyz')
+        parsed.argv.foo.should.equal('abc')
+        parsed.defaulted.should.deep.equal({ foo: true })
+      })
+
+      it('does not mark value as defaulted when provided via CLI', function () {
+        const parsed = parser.detailed('--foo bar', {
+          default: { foo: 'def' }
+        })
+        parsed.argv.foo.should.equal('bar')
+        parsed.defaulted.should.deep.equal({})
+      })
+    })
+  })
+
+  // Refs: https://github.com/yargs/yargs-parser/issues/386
   describe('perf', () => {
     const i = 100000
     describe('unknown-options-as-args', () => {
