@@ -409,11 +409,7 @@ export class YargsParser {
     // 3. value from config file
     // 4. value from config objects
     // 5. configured default value
-    applyEnvVars(argv, true) // special case: check env vars that point to config file
-    applyEnvVars(argv, false)
-    setConfig(argv)
-    setConfigObjects()
-    applyDefaultsAndAliases(argv, flags.aliases, defaults, true)
+    applyExternalSources(argv)
     applyCoercions(argv)
     if (configuration['set-placeholder-key']) setPlaceholderKeys(argv)
 
@@ -441,6 +437,26 @@ export class YargsParser {
         }
 
         delete argv[alias]
+      })
+    }
+
+    function applyExternalSources (argv: Arguments): void {
+      applyExternalValueSources(argv, {
+        applyConfigEnvValues (argv) {
+          applyEnvVars(argv, true)
+        },
+        applyEnvValues (argv) {
+          applyEnvVars(argv, false)
+        },
+        applyConfigValues (argv) {
+          setConfig(argv)
+        },
+        applyConfigObjectValues () {
+          setConfigObjects()
+        },
+        applyDefaults (argv) {
+          applyDefaultsAndAliases(argv, flags.aliases, defaults, true)
+        }
       })
     }
 
@@ -650,99 +666,46 @@ export class YargsParser {
       return value
     }
 
-    // set args from config.json file, this should be
-    // applied last so that defaults can be applied.
     function setConfig (argv: Arguments): void {
-      const configLookup = Object.create(null)
-
-      // expand defaults/aliases, in-case any happen to reference
-      // the config.json file.
-      applyDefaultsAndAliases(configLookup, flags.aliases, defaults)
-
-      Object.keys(flags.configs).forEach(function (configKey) {
-        const configPath = argv[configKey] || configLookup[configKey]
-        if (configPath) {
-          try {
-            let config = null
-            const resolvedConfigPath = mixin.resolve(mixin.cwd(), configPath)
-            const resolveConfig = flags.configs[configKey]
-
-            if (typeof resolveConfig === 'function') {
-              try {
-                config = resolveConfig(resolvedConfigPath)
-              } catch (e) {
-                config = e
-              }
-              if (config instanceof Error) {
-                error = config
-                return
-              }
-            } else {
-              config = mixin.require(resolvedConfigPath)
-            }
-
-            setConfigObject(config)
-          } catch (ex: any) {
-            // Deno will receive a PermissionDenied error if an attempt is
-            // made to load config without the --allow-read flag:
-            if (ex.name === 'PermissionDenied') error = ex
-            else if (argv[configKey]) error = Error(__('Invalid JSON config file: %s', configPath))
-          }
+      applyConfigValues(argv, {
+        flags,
+        defaults,
+        cwd: mixin.cwd,
+        resolve: mixin.resolve,
+        require: mixin.require,
+        applyDefaultsAndAliases,
+        applyConfigObject: setConfigObject,
+        onError (nextError) {
+          error = nextError
+        },
+        invalidConfigFileError (configPath) {
+          return Error(__('Invalid JSON config file: %s', configPath))
         }
       })
     }
 
-    // set args from config object.
-    // it recursively checks nested objects.
     function setConfigObject (config: { [key: string]: any }, prev?: string): void {
-      Object.keys(config).forEach(function (key) {
-        const value = config[key]
-        const fullKey = prev ? prev + '.' + key : key
-
-        // if the value is an inner object and we have dot-notation
-        // enabled, treat inner objects in config the same as
-        // heavily nested dot notations (foo.bar.apple).
-        if (typeof value === 'object' && value !== null && !Array.isArray(value) && configuration['dot-notation']) {
-          // if the value is an object but not an array, check nested object
-          setConfigObject(value, fullKey)
-        } else {
-          // setting arguments via CLI takes precedence over
-          // values within the config file.
-          if (!hasKey(argv, fullKey.split('.')) || (checkAllAliases(fullKey, flags.arrays) && configuration['combine-arrays'])) {
-            setArg(fullKey, value)
-          }
-        }
+      applyConfigObjectValues(config, prev, {
+        argv,
+        configuration,
+        flags,
+        hasKey,
+        setArg,
+        checkAllAliases
       })
     }
 
-    // set all config objects passed in opts
     function setConfigObjects (): void {
-      if (typeof configObjects !== 'undefined') {
-        configObjects.forEach(function (configObject) {
-          setConfigObject(configObject)
-        })
-      }
+      applyConfigObjectCollection(configObjects, setConfigObject)
     }
 
     function applyEnvVars (argv: Arguments, configOnly: boolean): void {
-      if (typeof envPrefix === 'undefined') return
-
-      const prefix = typeof envPrefix === 'string' ? envPrefix : ''
-      const env = mixin.env()
-      Object.keys(env).forEach(function (envVar) {
-        if (prefix === '' || envVar.lastIndexOf(prefix, 0) === 0) {
-          // get array of nested keys and convert them to camel case
-          const keys = envVar.split('__').map(function (key, i) {
-            if (i === 0) {
-              key = key.substring(prefix.length)
-            }
-            return camelCase(key)
-          })
-
-          if (((configOnly && flags.configs[keys.join('.')]) || !configOnly) && !hasKey(argv, keys)) {
-            setArg(keys.join('.'), env[envVar])
-          }
-        }
+      applyEnvironmentValues(argv, configOnly, {
+        envPrefix,
+        env: mixin.env(),
+        flags,
+        hasKey,
+        setArg
       })
     }
 
@@ -1045,6 +1008,158 @@ export class YargsParser {
       error: error,
       newAliases: Object.assign({}, newAliases)
     }
+  }
+}
+
+type ApplyDefaultsAndAliases = (obj: { [key: string]: any }, aliases: { [key: string]: string[] }, defaults: { [key: string]: any }, canLog?: boolean) => void
+type ApplyConfigObject = (config: { [key: string]: any }, prev?: string) => void
+type HasKey = (obj: { [key: string]: any }, keys: string[]) => boolean
+type SetArg = (key: string, value: any) => void
+type CheckAllAliases = (key: string, flag: any) => any
+
+function applyExternalValueSources (argv: Arguments, steps: {
+  applyConfigEnvValues: (argv: Arguments) => void
+  applyEnvValues: (argv: Arguments) => void
+  applyConfigValues: (argv: Arguments) => void
+  applyConfigObjectValues: () => void
+  applyDefaults: (argv: Arguments) => void
+}): void {
+  steps.applyConfigEnvValues(argv)
+  steps.applyEnvValues(argv)
+  steps.applyConfigValues(argv)
+  steps.applyConfigObjectValues()
+  steps.applyDefaults(argv)
+}
+
+function applyEnvironmentValues (argv: Arguments, configOnly: boolean, {
+  envPrefix,
+  env,
+  flags,
+  hasKey,
+  setArg
+}: {
+  envPrefix: string | undefined
+  env: Dictionary<string | undefined>
+  flags: Flags
+  hasKey: HasKey
+  setArg: SetArg
+}): void {
+  if (typeof envPrefix === 'undefined') return
+
+  const prefix = typeof envPrefix === 'string' ? envPrefix : ''
+  Object.keys(env).forEach(function (envVar) {
+    if (prefix === '' || envVar.lastIndexOf(prefix, 0) === 0) {
+      const keys = envVar.split('__').map(function (key, i) {
+        if (i === 0) {
+          key = key.substring(prefix.length)
+        }
+        return camelCase(key)
+      })
+
+      if (((configOnly && flags.configs[keys.join('.')]) || !configOnly) && !hasKey(argv, keys)) {
+        setArg(keys.join('.'), env[envVar])
+      }
+    }
+  })
+}
+
+function applyConfigValues (argv: Arguments, {
+  flags,
+  defaults,
+  cwd,
+  resolve,
+  require,
+  applyDefaultsAndAliases,
+  applyConfigObject,
+  onError,
+  invalidConfigFileError
+}: {
+  flags: Flags
+  defaults: OptionsDefault
+  cwd: Function
+  resolve: Function
+  require: Function
+  applyDefaultsAndAliases: ApplyDefaultsAndAliases
+  applyConfigObject: ApplyConfigObject
+  onError: (error: Error) => void
+  invalidConfigFileError: (configPath: string) => Error
+}): void {
+  const configLookup = Object.create(null)
+
+  applyDefaultsAndAliases(configLookup, flags.aliases, defaults)
+
+  Object.keys(flags.configs).forEach(function (configKey) {
+    const configPath = argv[configKey] || configLookup[configKey]
+    if (configPath) {
+      try {
+        let config = null
+        const resolvedConfigPath = resolve(cwd(), configPath)
+        const resolveConfig = flags.configs[configKey]
+
+        if (typeof resolveConfig === 'function') {
+          try {
+            config = resolveConfig(resolvedConfigPath)
+          } catch (e) {
+            config = e
+          }
+          if (config instanceof Error) {
+            onError(config)
+            return
+          }
+        } else {
+          config = require(resolvedConfigPath)
+        }
+
+        applyConfigObject(config)
+      } catch (ex: any) {
+        if (ex.name === 'PermissionDenied') onError(ex)
+        else if (argv[configKey]) onError(invalidConfigFileError(configPath))
+      }
+    }
+  })
+}
+
+function applyConfigObjectValues (config: { [key: string]: any }, prev: string | undefined, {
+  argv,
+  configuration,
+  flags,
+  hasKey,
+  setArg,
+  checkAllAliases
+}: {
+  argv: Arguments
+  configuration: Configuration
+  flags: Flags
+  hasKey: HasKey
+  setArg: SetArg
+  checkAllAliases: CheckAllAliases
+}): void {
+  Object.keys(config).forEach(function (key) {
+    const value = config[key]
+    const fullKey = prev ? prev + '.' + key : key
+
+    if (typeof value === 'object' && value !== null && !Array.isArray(value) && configuration['dot-notation']) {
+      applyConfigObjectValues(value, fullKey, {
+        argv,
+        configuration,
+        flags,
+        hasKey,
+        setArg,
+        checkAllAliases
+      })
+    } else {
+      if (!hasKey(argv, fullKey.split('.')) || (checkAllAliases(fullKey, flags.arrays) && configuration['combine-arrays'])) {
+        setArg(fullKey, value)
+      }
+    }
+  })
+}
+
+function applyConfigObjectCollection (configObjects: Array<{ [key: string]: any }>, applyConfigObject: ApplyConfigObject): void {
+  if (typeof configObjects !== 'undefined') {
+    configObjects.forEach(function (configObject) {
+      applyConfigObject(configObject)
+    })
   }
 }
 

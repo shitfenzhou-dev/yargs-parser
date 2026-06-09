@@ -668,6 +668,33 @@ describe('yargs-parser', function () {
       })
     })
 
+    it('should sync aliases for config and default sourced values', function () {
+      const argv = parser([], {
+        alias: {
+          'config-value': ['configValue', 'cv'],
+          'default-value': ['defaultValue', 'dv']
+        },
+        config: {
+          settings: function () {
+            return {
+              'config-value': 'from-config'
+            }
+          }
+        },
+        default: {
+          settings: jsonPath,
+          'default-value': 'from-default'
+        }
+      })
+
+      argv['config-value'].should.equal('from-config')
+      argv.configValue.should.equal('from-config')
+      argv.cv.should.equal('from-config')
+      argv['default-value'].should.equal('from-default')
+      argv.defaultValue.should.equal('from-default')
+      argv.dv.should.equal('from-default')
+    })
+
     it('allows a custom parsing function to be provided', function () {
       const jsPath = path.resolve(__dirname, './fixtures/config.txt')
       const argv = parser(['--settings', jsPath, '--foo', 'bar'], {
@@ -863,6 +890,39 @@ describe('yargs-parser', function () {
 
       argv.should.have.property('foo', 'bar')
       argv.should.have.property('bar', 'baz')
+    })
+
+    it('should keep nested config objects intact when dot-notation is disabled', function () {
+      const argv = parser([], {
+        configObjects: [{
+          nested: {
+            value: 'config-object'
+          }
+        }],
+        configuration: {
+          'dot-notation': false
+        }
+      })
+
+      argv.nested.should.deep.equal({
+        value: 'config-object'
+      })
+      expect(argv).not.to.have.property('nested.value')
+    })
+
+    it('should combine and normalize array values from cli and config objects', function () {
+      const argv = parser(['--paths', ['bin', '..', 'cli.txt'].join(path.sep)], {
+        array: ['paths'],
+        normalize: ['paths'],
+        configObjects: [{
+          paths: [['lib', '..', 'config.txt'].join(path.sep)]
+        }],
+        configuration: {
+          'combine-arrays': true
+        }
+      })
+
+      argv.paths.should.deep.equal(['cli.txt', 'config.txt'])
     })
 
     it('should combine array typed options with alias and camel-case', function () {
@@ -2258,6 +2318,59 @@ describe('yargs-parser', function () {
       result.should.have.property('version')
       result.should.have.property('truthy')
       result.z.should.equal(55)
+    })
+
+    it('should preserve precedence across cli, env, config, config objects, and defaults', function () {
+      process.env.REFAC_PRIORITY_CFG = jsonPath
+      process.env.REFAC_PRIORITY_FOO = 'env'
+      process.env.REFAC_PRIORITY_ENV_ONLY = 'env'
+      const result = parser(['--foo', 'cli'], {
+        envPrefix: 'REFAC_PRIORITY',
+        config: {
+          cfg: function (configPath) {
+            configPath.should.equal(jsonPath)
+            return {
+              foo: 'config',
+              envOnly: 'config',
+              configOnly: 'config'
+            }
+          }
+        },
+        configObjects: [{
+          foo: 'config-object',
+          envOnly: 'config-object',
+          configOnly: 'config-object',
+          objectOnly: 'config-object'
+        }],
+        default: {
+          foo: 'default',
+          envOnly: 'default',
+          configOnly: 'default',
+          objectOnly: 'default',
+          defaultOnly: 'default'
+        }
+      })
+
+      result.cfg.should.equal(jsonPath)
+      result.foo.should.equal('cli')
+      result.envOnly.should.equal('env')
+      result.configOnly.should.equal('config')
+      result.objectOnly.should.equal('config-object')
+      result.defaultOnly.should.equal('default')
+    })
+
+    it('should surface callback errors when config path comes from env', function () {
+      process.env.REFAC_THROW_CFG = jsonPath
+      const argv = parser.detailed([], {
+        envPrefix: 'REFAC_THROW',
+        config: {
+          cfg: function () {
+            throw Error('refactor config boom')
+          }
+        }
+      })
+
+      argv.error.message.should.equal('refactor config boom')
     })
 
     it('should prefer cli config file option over env var config file option', function () {
