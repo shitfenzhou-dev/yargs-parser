@@ -429,6 +429,19 @@ describe('yargs-parser', function () {
       argv.should.have.property('f', 11)
     })
 
+    it('keeps transitively declared aliases synchronized across all keys', function () {
+      const argv = parser(['--b', '11'], {
+        alias: {
+          a: ['b'],
+          b: ['c']
+        }
+      })
+
+      argv.should.have.property('a', 11)
+      argv.should.have.property('b', 11)
+      argv.should.have.property('c', 11)
+    })
+
     it('should merge two lists of aliases if they collide', function () {
       const argv = parser(['-f', '11', '--zoom', '55'], {
         alias: {
@@ -998,6 +1011,19 @@ describe('yargs-parser', function () {
       argv.foo.bar.cool.should.eql(11)
     })
 
+    it('keeps dot notation values synchronized across merged root aliases', function () {
+      const argv = parser(['--foo.bar', '99'], {
+        alias: {
+          foo: ['f'],
+          f: ['g']
+        }
+      })
+
+      argv.foo.bar.should.eql(99)
+      argv.f.bar.should.eql(99)
+      argv.g.bar.should.eql(99)
+    })
+
     it("should allow flags to use dot notation, when separated by '='", function () {
       const argv = parser(['-f.foo=99'])
       argv.f.foo.should.eql(99)
@@ -1359,6 +1385,19 @@ describe('yargs-parser', function () {
         parsed.defaulted.should.deep.equal({ kaa: true })
       })
 
+      it('keeps defaulted semantics for dashed keys with aliases and camelCase expansion', function () {
+        const parsed = parser.detailed('', {
+          default: { 'foo-bar': 'abc' },
+          alias: { 'foo-bar': ['f'] }
+        })
+
+        parsed.argv._.should.deep.equal([])
+        parsed.argv.should.have.property('foo-bar', 'abc')
+        parsed.argv.should.have.property('fooBar', 'abc')
+        parsed.argv.should.have.property('f', 'abc')
+        parsed.defaulted.should.deep.equal({ 'foo-bar': true })
+      })
+
       it('setting an alias excludes associated key from defaulted', function () {
         const parsed = parser.detailed('--foo abc', {
           default: { kaa: 'abc' },
@@ -1468,6 +1507,18 @@ describe('yargs-parser', function () {
         result.should.have.property('o').that.is.a('string').and.equals('val')
         result.should.have.property('some-option').that.is.a('string').and.equals('val')
         result.should.have.property('someOption').that.is.a('string').and.equals('val')
+      })
+
+      it('keeps camelCase inputs synchronized with dashed aliases', function () {
+        const result = parser(['--fooBar', 'val'], {
+          alias: {
+            fooBar: ['f']
+          }
+        })
+
+        result.should.have.property('fooBar').that.is.a('string').and.equals('val')
+        result.should.have.property('foo-bar').that.is.a('string').and.equals('val')
+        result.should.have.property('f').that.is.a('string').and.equals('val')
       })
 
       // https://github.com/yargs/yargs-parser/issues/95
@@ -3837,6 +3888,23 @@ describe('yargs-parser', function () {
       argv.should.deep.equal({
         _: [],
         testValue: 1
+      })
+    })
+
+    it('strip-aliased and strip-dashed keeps only the canonical camelCase key for dashed aliases', function () {
+      const argv = parser(['--foo-bar', '1'], {
+        number: ['foo-bar'],
+        alias: {
+          'foo-bar': ['f', 'bar-baz']
+        },
+        configuration: {
+          'strip-aliased': true,
+          'strip-dashed': true
+        }
+      })
+      argv.should.deep.equal({
+        _: [],
+        fooBar: 1
       })
     })
 

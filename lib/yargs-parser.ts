@@ -108,6 +108,13 @@ export class YargsParser {
       coercions: Object.create(null),
       keys: []
     }
+    const aliasManager = new AliasManager({
+      configuration,
+      defaulted,
+      explicitAliases: aliases,
+      flags,
+      newAliases
+    })
     const negative = /^-([0-9]+(\.[0-9]+)?|\.[0-9]+)$/
     const negatedBoolean = new RegExp('^--' + configuration['negation-prefix'] + '(.+)')
 
@@ -192,14 +199,10 @@ export class YargsParser {
 
     // create a lookup table that takes into account all
     // combinations of aliases: {f: ['foo'], foo: ['f']}
-    extendAliases(opts.key, aliases, opts.default, flags.arrays)
+    aliasManager.extend(opts.key, aliases, opts.default, flags.arrays)
 
     // apply default values to all aliases.
-    Object.keys(defaults).forEach(function (key) {
-      (flags.aliases[key] || []).forEach(function (alias) {
-        defaults[alias] = defaults[key]
-      })
-    })
+    aliasManager.syncDefaults(defaults)
 
     let error: Error | null = null
     checkConfiguration()
@@ -413,7 +416,7 @@ export class YargsParser {
     applyEnvVars(argv, false)
     setConfig(argv)
     setConfigObjects()
-    applyDefaultsAndAliases(argv, flags.aliases, defaults, true)
+    aliasManager.applyDefaults(argv, defaults, setKey, hasKey, true)
     applyCoercions(argv)
     if (configuration['set-placeholder-key']) setPlaceholderKeys(argv)
 
@@ -428,21 +431,7 @@ export class YargsParser {
       argv[notFlagsArgv].push(key)
     })
 
-    if (configuration['camel-case-expansion'] && configuration['strip-dashed']) {
-      Object.keys(argv).filter(key => key !== '--' && key.includes('-')).forEach(key => {
-        delete argv[key]
-      })
-    }
-
-    if (configuration['strip-aliased']) {
-      ;([] as string[]).concat(...Object.keys(aliases).map(k => aliases[k])).forEach(alias => {
-        if (configuration['camel-case-expansion'] && alias.includes('-')) {
-          delete argv[alias.split('.').map(prop => camelCase(prop)).join('.')]
-        }
-
-        delete argv[alias]
-      })
-    }
+    aliasManager.strip(argv)
 
     // Push argument into positional array, applying numeric coercion:
     function pushPositional (arg: string) {
@@ -549,43 +538,16 @@ export class YargsParser {
         const alias = key.split('.').map(function (prop) {
           return camelCase(prop)
         }).join('.')
-        addNewAlias(key, alias)
+        aliasManager.add(key, alias)
       }
 
       const value = processValue(key, val, shouldStripQuotes)
       const splitKey = key.split('.')
       setKey(argv, splitKey, value)
+      aliasManager.populateArguments(argv, key, splitKey, value, setKey)
 
-      // handle populating aliases of the full key
-      if (flags.aliases[key]) {
-        flags.aliases[key].forEach(function (x) {
-          const keyProperties = x.split('.')
-          setKey(argv, keyProperties, value)
-        })
-      }
-
-      // handle populating aliases of the first element of the dot-notation key
-      if (splitKey.length > 1 && configuration['dot-notation']) {
-        ;(flags.aliases[splitKey[0]] || []).forEach(function (x) {
-          let keyProperties = x.split('.')
-
-          // expand alias with nested objects in key
-          const a = ([] as string[]).concat(splitKey)
-          a.shift() // nuke the old key.
-          keyProperties = keyProperties.concat(a)
-
-          // populate alias only if is not already an alias of the full key
-          // (already populated above)
-          if (!(flags.aliases[key] || []).includes(keyProperties.join('.'))) {
-            setKey(argv, keyProperties, value)
-          }
-        })
-      }
-
-      // Set normalize getter and setter when key is in 'normalize' but isn't an array
       if (checkAllAliases(key, flags.normalize) && !checkAllAliases(key, flags.arrays)) {
-        const keys = [key].concat(flags.aliases[key] || [])
-        keys.forEach(function (key) {
+        aliasManager.keysFor(key).forEach(function (key) {
           Object.defineProperty(argvReturn, key, {
             enumerable: true,
             get () {
@@ -596,16 +558,6 @@ export class YargsParser {
             }
           })
         })
-      }
-    }
-
-    function addNewAlias (key: string, alias: string): void {
-      if (!(flags.aliases[key] && flags.aliases[key].length)) {
-        flags.aliases[key] = [alias]
-        newAliases[alias] = true
-      }
-      if (!(flags.aliases[alias] && flags.aliases[alias].length)) {
-        addNewAlias(alias, key)
       }
     }
 
@@ -657,7 +609,7 @@ export class YargsParser {
 
       // expand defaults/aliases, in-case any happen to reference
       // the config.json file.
-      applyDefaultsAndAliases(configLookup, flags.aliases, defaults)
+      aliasManager.applyDefaults(configLookup, defaults, setKey, hasKey)
 
       Object.keys(flags.configs).forEach(function (configKey) {
         const configPath = argv[configKey] || configLookup[configKey]
@@ -755,7 +707,7 @@ export class YargsParser {
           if (typeof coerce === 'function') {
             try {
               const value = maybeCoerceNumber(key, coerce(argv[key]))
-              ;(([] as string[]).concat(flags.aliases[key] || [], key)).forEach(ali => {
+              aliasManager.keysFor(key).forEach(ali => {
                 applied.add(ali)
                 argv[ali] = value
               })
@@ -774,20 +726,6 @@ export class YargsParser {
         if (typeof argv[key] === 'undefined') argv[key] = undefined
       })
       return argv
-    }
-
-    function applyDefaultsAndAliases (obj: { [key: string]: any }, aliases: { [key: string]: string[] }, defaults: { [key: string]: any }, canLog: boolean = false): void {
-      Object.keys(defaults).forEach(function (key) {
-        if (!hasKey(obj, key.split('.'))) {
-          setKey(obj, key.split('.'), defaults[key])
-          if (canLog) defaulted[key] = true
-
-          ;(aliases[key] || []).forEach(function (x) {
-            if (hasKey(obj, x.split('.'))) return
-            setKey(obj, x.split('.'), defaults[key])
-          })
-        }
-      })
     }
 
     function hasKey (obj: { [key: string]: any }, keys: string[]): boolean {
@@ -873,45 +811,6 @@ export class YargsParser {
       }
     }
 
-    // extend the aliases list with inferred aliases.
-    function extendAliases (...args: Array<{ [key: string]: any } | undefined>) {
-      args.forEach(function (obj) {
-        Object.keys(obj || {}).forEach(function (key) {
-          // short-circuit if we've already added a key
-          // to the aliases array, for example it might
-          // exist in both 'opts.default' and 'opts.key'.
-          if (flags.aliases[key]) return
-
-          flags.aliases[key] = ([] as string[]).concat(aliases[key] || [])
-          // For "--option-name", also set argv.optionName
-          flags.aliases[key].concat(key).forEach(function (x) {
-            if (/-/.test(x) && configuration['camel-case-expansion']) {
-              const c = camelCase(x)
-              if (c !== key && flags.aliases[key].indexOf(c) === -1) {
-                flags.aliases[key].push(c)
-                newAliases[c] = true
-              }
-            }
-          })
-          // For "--optionName", also set argv['option-name']
-          flags.aliases[key].concat(key).forEach(function (x) {
-            if (x.length > 1 && /[A-Z]/.test(x) && configuration['camel-case-expansion']) {
-              const c = decamelize(x, '-')
-              if (c !== key && flags.aliases[key].indexOf(c) === -1) {
-                flags.aliases[key].push(c)
-                newAliases[c] = true
-              }
-            }
-          })
-          flags.aliases[key].forEach(function (x) {
-            flags.aliases[x] = [key].concat(flags.aliases[key].filter(function (y) {
-              return x !== y
-            }))
-          })
-        })
-      })
-    }
-
     // return the 1st set flag for any of a key's aliases (or false if no flag set)
     function checkAllAliases (key: string, flag: StringFlag): ValueOf<StringFlag> | false
     function checkAllAliases (key: string, flag: BooleanFlag): ValueOf<BooleanFlag> | false
@@ -919,10 +818,7 @@ export class YargsParser {
     function checkAllAliases (key: string, flag: ConfigsFlag): ValueOf<ConfigsFlag> | false
     function checkAllAliases (key: string, flag: CoercionsFlag): ValueOf<CoercionsFlag> | false
     function checkAllAliases (key: string, flag: Flag): ValueOf<Flag> | false {
-      const toCheck = ([] as string[]).concat(flags.aliases[key] || [], key)
-      const keys = Object.keys(flag)
-      const setAlias = toCheck.find(key => keys.includes(key))
-      return setAlias ? flag[setAlias] : false
+      return aliasManager.checkFlag(key, flag)
     }
 
     function hasAnyFlag (key: string): boolean {
@@ -1045,6 +941,163 @@ export class YargsParser {
       error: error,
       newAliases: Object.assign({}, newAliases)
     }
+  }
+}
+
+class AliasManager {
+  private readonly configuration: Configuration
+  private readonly defaulted: Dictionary<boolean>
+  private readonly explicitAliases: Dictionary<string[]>
+  private readonly flags: Flags
+  private readonly newAliases: Dictionary<boolean>
+
+  constructor ({
+    configuration,
+    defaulted,
+    explicitAliases,
+    flags,
+    newAliases
+  }: {
+    configuration: Configuration
+    defaulted: Dictionary<boolean>
+    explicitAliases: Dictionary<string[]>
+    flags: Flags
+    newAliases: Dictionary<boolean>
+  }) {
+    this.configuration = configuration
+    this.defaulted = defaulted
+    this.explicitAliases = explicitAliases
+    this.flags = flags
+    this.newAliases = newAliases
+  }
+
+  add (key: string, alias: string): void {
+    if (!(this.flags.aliases[key] && this.flags.aliases[key].length)) {
+      this.flags.aliases[key] = [alias]
+      this.newAliases[alias] = true
+    }
+    if (!(this.flags.aliases[alias] && this.flags.aliases[alias].length)) {
+      this.add(alias, key)
+    }
+  }
+
+  extend (...sources: Array<{ [key: string]: any } | undefined>): void {
+    sources.forEach(source => {
+      Object.keys(source || {}).forEach(key => {
+        this.registerKey(key)
+      })
+    })
+  }
+
+  syncDefaults (defaults: OptionsDefault): void {
+    Object.keys(defaults).forEach(key => {
+      this.getAliases(key).forEach(alias => {
+        defaults[alias] = defaults[key]
+      })
+    })
+  }
+
+  applyDefaults (
+    obj: { [key: string]: any },
+    defaults: { [key: string]: any },
+    setKey: (obj: { [key: string]: any }, keys: string[], value: any) => void,
+    hasKey: (obj: { [key: string]: any }, keys: string[]) => boolean,
+    canLog: boolean = false
+  ): void {
+    Object.keys(defaults).forEach(key => {
+      if (!hasKey(obj, key.split('.'))) {
+        setKey(obj, key.split('.'), defaults[key])
+        if (canLog) this.defaulted[key] = true
+
+        this.getAliases(key).forEach(alias => {
+          if (hasKey(obj, alias.split('.'))) return
+          setKey(obj, alias.split('.'), defaults[key])
+        })
+      }
+    })
+  }
+
+  checkFlag (key: string, flag: Flag): ValueOf<Flag> | false {
+    const keys = Object.keys(flag)
+    const setAlias = this.keysFor(key).find(alias => keys.includes(alias))
+    return setAlias ? flag[setAlias] : false
+  }
+
+  keysFor (key: string): string[] {
+    return this.getAliases(key).concat(key)
+  }
+
+  populateArguments (
+    obj: { [key: string]: any },
+    key: string,
+    splitKey: string[],
+    value: any,
+    setKey: (obj: { [key: string]: any }, keys: string[], value: any) => void
+  ): void {
+    this.getAliases(key).forEach(alias => {
+      setKey(obj, alias.split('.'), value)
+    })
+
+    if (splitKey.length > 1 && this.configuration['dot-notation']) {
+      this.getAliases(splitKey[0]).forEach(alias => {
+        const keyProperties = alias.split('.').concat(splitKey.slice(1))
+        if (!this.getAliases(key).includes(keyProperties.join('.'))) {
+          setKey(obj, keyProperties, value)
+        }
+      })
+    }
+  }
+
+  strip (argv: Arguments): void {
+    if (this.configuration['camel-case-expansion'] && this.configuration['strip-dashed']) {
+      Object.keys(argv).filter(key => key !== '--' && key.includes('-')).forEach(key => {
+        delete argv[key]
+      })
+    }
+
+    if (this.configuration['strip-aliased']) {
+      ;([] as string[]).concat(...Object.keys(this.explicitAliases).map(key => this.explicitAliases[key])).forEach(alias => {
+        if (this.configuration['camel-case-expansion'] && alias.includes('-')) {
+          delete argv[alias.split('.').map(prop => camelCase(prop)).join('.')]
+        }
+
+        delete argv[alias]
+      })
+    }
+  }
+
+  private getAliases (key: string): string[] {
+    return this.flags.aliases[key] || []
+  }
+
+  private registerKey (key: string): void {
+    if (this.flags.aliases[key]) return
+
+    this.flags.aliases[key] = ([] as string[]).concat(this.explicitAliases[key] || [])
+
+    this.getAliases(key).concat(key).forEach(alias => {
+      if (/-/.test(alias) && this.configuration['camel-case-expansion']) {
+        const camelCased = camelCase(alias)
+        if (camelCased !== key && this.flags.aliases[key].indexOf(camelCased) === -1) {
+          this.flags.aliases[key].push(camelCased)
+          this.newAliases[camelCased] = true
+        }
+      }
+    })
+
+    this.getAliases(key).concat(key).forEach(alias => {
+      if (alias.length > 1 && /[A-Z]/.test(alias) && this.configuration['camel-case-expansion']) {
+        const dashed = decamelize(alias, '-')
+        if (dashed !== key && this.flags.aliases[key].indexOf(dashed) === -1) {
+          this.flags.aliases[key].push(dashed)
+          this.newAliases[dashed] = true
+        }
+      }
+    })
+
+    this.flags.aliases[key].forEach(alias => {
+      this.flags.aliases[alias] = [key].concat(this.flags.aliases[key].filter(otherAlias => alias !== otherAlias))
+    })
   }
 }
 
