@@ -4174,4 +4174,128 @@ describe('yargs-parser', function () {
       parsed[arg].should.equal(35)
     })
   })
+
+  describe('alias-manager regression', function () {
+    it('explicit alias with transitive chain is propagated bidirectionally', function () {
+      const parsed = parser.detailed(['-a', 'value'], {
+        alias: { a: ['b'], b: ['c'] }
+      })
+      parsed.argv.a.should.equal('value')
+      parsed.argv.b.should.equal('value')
+      parsed.argv.c.should.equal('value')
+      // every member of the equivalence group lists the other two.
+      parsed.aliases.a.sort().should.eql(['b', 'c'])
+      parsed.aliases.b.sort().should.eql(['a', 'c'])
+      parsed.aliases.c.sort().should.eql(['a', 'b'])
+    })
+
+    it('camel-case expansion creates aliases for dashed option names', function () {
+      const parsed = parser.detailed(['--foo-bar=42'])
+      parsed.argv['foo-bar'].should.equal(42)
+      parsed.argv.fooBar.should.equal(42)
+      // newAliases tracks the auto-generated camelCase alias.
+      parsed.newAliases.fooBar.should.equal(true)
+    })
+
+    it('camel-case expansion also creates a dashed alias from a camelCase option name', function () {
+      const parsed = parser.detailed([], {
+        array: ['fooBar']
+      })
+      // the dashed form should be registered as an alias of the camelCase form.
+      parsed.aliases.fooBar.should.include('foo-bar')
+      parsed.aliases['foo-bar'].should.include('fooBar')
+      parsed.newAliases['foo-bar'].should.equal(true)
+    })
+
+    it('camel-case expansion does not happen when configuration is disabled', function () {
+      const parsed = parser.detailed(['--foo-bar=42'], {
+        configuration: { 'camel-case-expansion': false }
+      })
+      parsed.argv.should.have.property('foo-bar', 42)
+      parsed.argv.should.not.have.property('fooBar')
+      expect(parsed.aliases.fooBar).to.equal(undefined)
+    })
+
+    it('dot-notation alias propagates values through the head key', function () {
+      const parsed = parser(['--foo.bar=baz'], {
+        alias: { foo: ['f'] }
+      })
+      parsed.foo.bar.should.equal('baz')
+      parsed.f.bar.should.equal('baz')
+    })
+
+    it('dot-notation alias is also registered on the detailed aliases object', function () {
+      const parsed = parser.detailed(['--foo.bar=baz'], {
+        alias: { foo: ['f'] }
+      })
+      parsed.aliases.foo.should.include('f')
+      parsed.aliases.f.should.include('foo')
+    })
+
+    it('default value is propagated to all aliases and defaulted tracks the canonical key', function () {
+      const parsed = parser.detailed([], {
+        alias: { foo: ['f', 'bar'] },
+        default: { foo: 'hello' }
+      })
+      parsed.argv.foo.should.equal('hello')
+      parsed.argv.f.should.equal('hello')
+      parsed.argv.bar.should.equal('hello')
+      parsed.defaulted.foo.should.equal(true)
+      // only the key that owns the default is marked as defaulted (legacy behaviour).
+      expect(parsed.defaulted.f).to.equal(undefined)
+      expect(parsed.defaulted.bar).to.equal(undefined)
+    })
+
+    it('default value propagates to the camelCase alias of the dashed option', function () {
+      const parsed = parser.detailed([], {
+        alias: { 'foo-bar': ['f'] },
+        default: { 'foo-bar': 'hi' }
+      })
+      parsed.argv['foo-bar'].should.equal('hi')
+      parsed.argv.fooBar.should.equal('hi')
+      parsed.argv.f.should.equal('hi')
+    })
+
+    it('strip-aliased removes only the user-provided aliases and leaves the canonical + camelCase form', function () {
+      const parsed = parser(['--test-value', '1'], {
+        number: ['test-value'],
+        alias: { 'test-value': ['alt-test'] },
+        configuration: { 'strip-aliased': true }
+      })
+      parsed.should.deep.equal({
+        _: [],
+        'test-value': 1,
+        testValue: 1
+      })
+    })
+
+    it('strip-aliased combined with strip-dashed leaves only the canonical camelCase form', function () {
+      const parsed = parser(['--test-value', '1'], {
+        number: ['test-value'],
+        alias: { 'test-value': ['alt-test'] },
+        configuration: { 'strip-aliased': true, 'strip-dashed': true }
+      })
+      parsed.should.deep.equal({
+        _: [],
+        testValue: 1
+      })
+    })
+
+    it('type checks (boolean/string/number) propagate across aliases', function () {
+      const parsed = parser(['-f'], {
+        alias: { f: ['foo-bar'] },
+        boolean: ['foo-bar']
+      })
+      parsed.f.should.equal(true)
+      parsed.fooBar.should.equal(true)
+      parsed['foo-bar'].should.equal(true)
+      // should NOT be coerced to a number if the key (or any alias) is a boolean.
+      const parsed2 = parser(['--count=5'], {
+        alias: { count: ['c'] },
+        number: ['c']
+      })
+      parsed2.count.should.equal(5)
+      parsed2.c.should.equal(5)
+    })
+  })
 })
