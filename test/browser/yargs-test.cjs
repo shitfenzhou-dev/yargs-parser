@@ -12,8 +12,10 @@ async function parse (argv, opts) {
   })
   }
   const page = await browser.newPage()
-  opts = encodeURIComponent(JSON.stringify(opts))
-  await page.goto(`http://127.0.0.1:8080/test/browser/yargs-test?argv=${encodeURIComponent(argv)}&opts=${opts}`)
+  const params = new URLSearchParams()
+  params.set('argv', argv)
+  params.set('opts', JSON.stringify(opts || {}))
+  await page.goto(`http://127.0.0.1:8080/test/browser/yargs-test?${params.toString()}`)
   const element = await page.$('#output')
   return JSON.parse(await page.evaluate(element => element.textContent, element))
 }
@@ -45,6 +47,37 @@ async function tests () {
       goodbye: 'world'
     })
     console.info('✅ parse with aliases')
+  }
+
+  // Regression tests for browser envPrefix compatibility:
+  {
+    const output = await parse('--hello world', { envPrefix: 'APP_' })
+    deepStrictEqual(output, {
+      _: [],
+      hello: 'world'
+    })
+    console.info('✅ parse with envPrefix does not throw in browser')
+  }
+
+  {
+    const output = await parse('', { envPrefix: 'APP_' })
+    deepStrictEqual(output, {
+      _: []
+    })
+    console.info('✅ parse empty argv with envPrefix returns only _')
+  }
+
+  {
+    const output = await parse('--app-value cli', {
+      envPrefix: 'APP_',
+      default: { appValue: 'default' }
+    })
+    deepStrictEqual(output, {
+      _: [],
+      appValue: 'cli',
+      'app-value': 'cli'
+    })
+    console.info('✅ CLI value overrides default, empty browser env does not interfere')
   }
 }
 

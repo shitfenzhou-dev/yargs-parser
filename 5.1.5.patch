@@ -1,0 +1,89 @@
+diff --git a/browser.js b/browser.js
+index 241202c..814a0ee 100644
+--- a/browser.js
++++ b/browser.js
+@@ -12,7 +12,7 @@ const parser = new YargsParser({
+   require: () => {
+     throw Error('loading config from files not currently supported in browser')
+   },
+-  env: () => {}
++  env: () => ({})
+ })
+ 
+ const yargsParser = function Parser (args, opts) {
+diff --git a/test/browser/yargs-test.cjs b/test/browser/yargs-test.cjs
+index 92d1ee0..fa236a9 100644
+--- a/test/browser/yargs-test.cjs
++++ b/test/browser/yargs-test.cjs
+@@ -12,8 +12,10 @@ async function parse (argv, opts) {
+   })
+   }
+   const page = await browser.newPage()
+-  opts = encodeURIComponent(JSON.stringify(opts))
+-  await page.goto(`http://127.0.0.1:8080/test/browser/yargs-test?argv=${encodeURIComponent(argv)}&opts=${opts}`)
++  const params = new URLSearchParams()
++  params.set('argv', argv)
++  params.set('opts', JSON.stringify(opts || {}))
++  await page.goto(`http://127.0.0.1:8080/test/browser/yargs-test?${params.toString()}`)
+   const element = await page.$('#output')
+   return JSON.parse(await page.evaluate(element => element.textContent, element))
+ }
+@@ -46,6 +48,37 @@ async function tests () {
+     })
+     console.info('✅ parse with aliases')
+   }
++
++  // Regression tests for browser envPrefix compatibility:
++  {
++    const output = await parse('--hello world', { envPrefix: 'APP_' })
++    deepStrictEqual(output, {
++      _: [],
++      hello: 'world'
++    })
++    console.info('✅ parse with envPrefix does not throw in browser')
++  }
++
++  {
++    const output = await parse('', { envPrefix: 'APP_' })
++    deepStrictEqual(output, {
++      _: []
++    })
++    console.info('✅ parse empty argv with envPrefix returns only _')
++  }
++
++  {
++    const output = await parse('--app-value cli', {
++      envPrefix: 'APP_',
++      default: { appValue: 'default' }
++    })
++    deepStrictEqual(output, {
++      _: [],
++      appValue: 'cli',
++      'app-value': 'cli'
++    })
++    console.info('✅ CLI value overrides default, empty browser env does not interfere')
++  }
+ }
+ 
+ tests().then(() => {
+diff --git a/test/browser/yargs-test.html b/test/browser/yargs-test.html
+index 71a7ff9..64d9c2c 100644
+--- a/test/browser/yargs-test.html
++++ b/test/browser/yargs-test.html
+@@ -5,12 +5,12 @@
+     // Import the ESM version of the yargs module:
+     import parser from 'http://127.0.0.1:8080/browser.js';
+ 
+-    // Grab argv from the URL's GET parameters:
+-    const match = window.location.href.match(/.*argv=(?<argv>[^&]*)&opts=(?<opts>.*)$/);
+-    const argv = decodeURIComponent(match.groups.argv);
++    // Grab argv and opts from the URL's query parameters:
++    const params = new URLSearchParams(window.location.search);
++    const argv = params.get('argv') || '';
+     let opts = {}
+     try {
+-      opts = JSON.parse(decodeURIComponent(match.groups.opts))
++      opts = JSON.parse(params.get('opts') || '{}')
+     } catch (_err) {}
+     
+     // Run yargs parser in browser context:

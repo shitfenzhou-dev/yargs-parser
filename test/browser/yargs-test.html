@@ -5,12 +5,12 @@
     // Import the ESM version of the yargs module:
     import parser from 'http://127.0.0.1:8080/browser.js';
 
-    // Grab argv from the URL's GET parameters:
-    const match = window.location.href.match(/.*argv=(?<argv>[^&]*)&opts=(?<opts>.*)$/);
-    const argv = decodeURIComponent(match.groups.argv);
+    // Grab argv and opts from the URL's query parameters:
+    const params = new URLSearchParams(window.location.search);
+    const argv = params.get('argv') || '';
     let opts = {}
     try {
-      opts = JSON.parse(decodeURIComponent(match.groups.opts))
+      opts = JSON.parse(params.get('opts') || '{}')
     } catch (_err) {}
     
     // Run yargs parser in browser context:
