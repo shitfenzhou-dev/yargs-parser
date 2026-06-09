@@ -46,6 +46,36 @@ async function tests () {
     })
     console.info('✅ parse with aliases')
   }
+
+  // Regressions: envPrefix should not throw in browser build.
+  {
+    const output = await parse('--hello world', { envPrefix: 'APP_' })
+    deepStrictEqual(output, {
+      _: [],
+      hello: 'world'
+    })
+    console.info('✅ parse with envPrefix does not throw and returns CLI args')
+  }
+
+  {
+    const output = await parse('', { envPrefix: 'APP_' })
+    deepStrictEqual(output, {
+      _: []
+    })
+    console.info('✅ parse empty string with envPrefix produces only _ keys, no phantom env vars')
+  }
+
+  {
+    const output = await parse('--app-value cli', {
+      envPrefix: 'APP_',
+      default: { appValue: 'default' }
+    })
+    deepStrictEqual(output, {
+      _: [],
+      appValue: 'cli'
+    })
+    console.info('✅ CLI value wins over defaults; empty browser env does not override default/CLI')
+  }
 }
 
 tests().then(() => {
@@ -55,5 +85,5 @@ tests().then(() => {
   console.error(err.stack)
   console.error('❌some tests failed')
   process.exitCode = 1
-  browser.close()
+  if (browser) browser.close()
 })

@@ -12,7 +12,7 @@ const parser = new YargsParser({
   require: () => {
     throw Error('loading config from files not currently supported in browser')
   },
-  env: () => {}
+  env: () => { return {} }
 })
 
 const yargsParser = function Parser (args, opts) {
