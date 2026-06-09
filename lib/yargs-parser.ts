@@ -32,6 +32,107 @@ import type {
 import { DefaultValuesForTypeKey } from './yargs-parser-types.js'
 import { camelCase, decamelize, looksLikeNumber } from './string-utils.js'
 
+class AliasManager {
+  private aliases: Dictionary<string[]> = Object.create(null)
+  private newAliases: Dictionary<boolean> = Object.create(null)
+  private configuration: Configuration
+
+  constructor (configuration: Configuration) {
+    this.configuration = configuration
+  }
+
+  getLookup (): Dictionary<string[]> {
+    return this.aliases
+  }
+
+  getNewAliases (): Dictionary<boolean> {
+    return this.newAliases
+  }
+
+  get (key: string): string[] | undefined {
+    return this.aliases[key]
+  }
+
+  has (key: string): boolean {
+    return !!this.aliases[key]
+  }
+
+  register (key: string, aliasList: string[]): void {
+    if (this.aliases[key]) return
+    this.aliases[key] = ([] as string[]).concat(aliasList)
+  }
+
+  addRuntimeAlias (key: string, alias: string): void {
+    if (!this.aliases[key] || !this.aliases[key].length) {
+      this.aliases[key] = [alias]
+      this.newAliases[alias] = true
+    }
+    if (!this.aliases[alias] || !this.aliases[alias].length) {
+      this.addRuntimeAlias(alias, key)
+    }
+  }
+
+  extendFromRawAliases (rawAliases: Dictionary<string[]>): void {
+    Object.keys(rawAliases).forEach(key => {
+      this.register(key, rawAliases[key])
+    })
+  }
+
+  extendWithCamelCaseExpansion (...sources: Array<{ [key: string]: any } | undefined>): void {
+    const filtered = sources.filter((s): s is { [key: string]: any } => !!s)
+    filtered.forEach(obj => {
+      Object.keys(obj).forEach(key => {
+        if (this.aliases[key]) return
+
+        this.aliases[key] = ([] as string[]).concat(this.aliases[key] || [])
+
+        this.aliases[key].concat(key).forEach(x => {
+          if (/-/.test(x) && this.configuration['camel-case-expansion']) {
+            const c = camelCase(x)
+            if (c !== key && this.aliases[key].indexOf(c) === -1) {
+              this.aliases[key].push(c)
+              this.newAliases[c] = true
+            }
+          }
+        })
+
+        this.aliases[key].concat(key).forEach(x => {
+          if (x.length > 1 && /[A-Z]/.test(x) && this.configuration['camel-case-expansion']) {
+            const c = decamelize(x, '-')
+            if (c !== key && this.aliases[key].indexOf(c) === -1) {
+              this.aliases[key].push(c)
+              this.newAliases[c] = true
+            }
+          }
+        })
+
+        this.aliases[key].forEach(x => {
+          this.aliases[x] = [key].concat(this.aliases[key].filter(y => x !== y))
+        })
+      })
+    })
+  }
+
+  syncDefaults (defaults: OptionsDefault): void {
+    Object.keys(defaults).forEach(key => {
+      ;(this.aliases[key] || []).forEach(alias => {
+        defaults[alias] = defaults[key]
+      })
+    })
+  }
+
+  stripAliasedFrom (argv: Arguments): void {
+    if (!this.configuration['strip-aliased']) return
+
+    ;([] as string[]).concat(...Object.keys(this.aliases).map(k => this.aliases[k])).forEach(alias => {
+      if (this.configuration['camel-case-expansion'] && alias.includes('-')) {
+        delete argv[alias.split('.').map(prop => camelCase(prop)).join('.')]
+      }
+      delete argv[alias]
+    })
+  }
+}
+
 let mixin: YargsParserMixin
 export class YargsParser {
   constructor (_mixin: YargsParserMixin) {
@@ -65,7 +166,7 @@ export class YargsParser {
     const inputIsString = typeof argsInput === 'string'
 
     // aliases might have transitive relationships, normalize this.
-    const aliases = combineAliases(Object.assign(Object.create(null), opts.alias))
+    const rawAliases = combineAliases(Object.assign(Object.create(null), opts.alias))
     const configuration: Configuration = Object.assign({
       'boolean-negation': true,
       'camel-case-expansion': true,
@@ -91,8 +192,9 @@ export class YargsParser {
     const envPrefix = opts.envPrefix
     const notFlagsOption = configuration['populate--']
     const notFlagsArgv: string = notFlagsOption ? '--' : '_'
-    const newAliases: Dictionary<boolean> = Object.create(null)
     const defaulted: Dictionary<boolean> = Object.create(null)
+    const aliasManager = new AliasManager(configuration)
+    aliasManager.extendFromRawAliases(rawAliases)
     // allow a i18n handler to be passed in, default to a fake one (util.format).
     const __ = opts.__ || mixin.format
     const flags: Flags = {
@@ -192,14 +294,10 @@ export class YargsParser {
 
     // create a lookup table that takes into account all
     // combinations of aliases: {f: ['foo'], foo: ['f']}
-    extendAliases(opts.key, aliases, opts.default, flags.arrays)
+    aliasManager.extendWithCamelCaseExpansion(opts.key, opts.default, flags.arrays)
 
     // apply default values to all aliases.
-    Object.keys(defaults).forEach(function (key) {
-      (flags.aliases[key] || []).forEach(function (alias) {
-        defaults[alias] = defaults[key]
-      })
-    })
+    aliasManager.syncDefaults(defaults)
 
     let error: Error | null = null
     checkConfiguration()
@@ -434,15 +532,7 @@ export class YargsParser {
       })
     }
 
-    if (configuration['strip-aliased']) {
-      ;([] as string[]).concat(...Object.keys(aliases).map(k => aliases[k])).forEach(alias => {
-        if (configuration['camel-case-expansion'] && alias.includes('-')) {
-          delete argv[alias.split('.').map(prop => camelCase(prop)).join('.')]
-        }
-
-        delete argv[alias]
-      })
-    }
+    aliasManager.stripAliasedFrom(argv)
 
     // Push argument into positional array, applying numeric coercion:
     function pushPositional (arg: string) {
@@ -600,13 +690,7 @@ export class YargsParser {
     }
 
     function addNewAlias (key: string, alias: string): void {
-      if (!(flags.aliases[key] && flags.aliases[key].length)) {
-        flags.aliases[key] = [alias]
-        newAliases[alias] = true
-      }
-      if (!(flags.aliases[alias] && flags.aliases[alias].length)) {
-        addNewAlias(alias, key)
-      }
+      aliasManager.addRuntimeAlias(key, alias)
     }
 
     function processValue (key: string, val: any, shouldStripQuotes: boolean) {
