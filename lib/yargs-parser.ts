@@ -602,7 +602,7 @@ export class YargsParser {
     function addNewAlias (key: string, alias: string): void {
       if (!(flags.aliases[key] && flags.aliases[key].length)) {
         flags.aliases[key] = [alias]
-        newAliases[alias] = true
+        newAliases[sanitizeKeyPath(alias)] = true
       }
       if (!(flags.aliases[alias] && flags.aliases[alias].length)) {
         addNewAlias(alias, key)
@@ -757,7 +757,7 @@ export class YargsParser {
               const value = maybeCoerceNumber(key, coerce(argv[key]))
               ;(([] as string[]).concat(flags.aliases[key] || [], key)).forEach(ali => {
                 applied.add(ali)
-                argv[ali] = value
+                argv[sanitizeKeyPath(ali)] = value
               })
             } catch (err) {
               error = err as Error
@@ -780,7 +780,7 @@ export class YargsParser {
       Object.keys(defaults).forEach(function (key) {
         if (!hasKey(obj, key.split('.'))) {
           setKey(obj, key.split('.'), defaults[key])
-          if (canLog) defaulted[key] = true
+          if (canLog) defaulted[sanitizeKeyPath(key)] = true
 
           ;(aliases[key] || []).forEach(function (x) {
             if (hasKey(obj, x.split('.'))) return
@@ -889,7 +889,7 @@ export class YargsParser {
               const c = camelCase(x)
               if (c !== key && flags.aliases[key].indexOf(c) === -1) {
                 flags.aliases[key].push(c)
-                newAliases[c] = true
+                newAliases[sanitizeKey(c)] = true
               }
             }
           })
@@ -899,7 +899,7 @@ export class YargsParser {
               const c = decamelize(x, '-')
               if (c !== key && flags.aliases[key].indexOf(c) === -1) {
                 flags.aliases[key].push(c)
-                newAliases[c] = true
+                newAliases[sanitizeKey(c)] = true
               }
             }
           })
@@ -1038,12 +1038,12 @@ export class YargsParser {
     }
 
     return {
-      aliases: Object.assign({}, flags.aliases),
+      aliases: sanitizeAliasesForReturn(flags.aliases),
       argv: Object.assign(argvReturn, argv),
       configuration: configuration,
-      defaulted: Object.assign({}, defaulted),
+      defaulted: sanitizeDictKeys(defaulted),
       error: error,
-      newAliases: Object.assign({}, newAliases)
+      newAliases: sanitizeDictKeys(newAliases)
     }
   }
 }
@@ -1105,11 +1105,31 @@ function increment (orig?: number | undefined): number {
   return orig !== undefined ? orig + 1 : 1
 }
 
-// TODO(bcoe): in the next major version of yargs, switch to
-// Object.create(null) for dot notation:
 function sanitizeKey (key: string): string {
   if (key === '__proto__') return '___proto___'
+  if (key === 'constructor') return '___constructor___'
+  if (key === 'prototype') return '___prototype___'
   return key
+}
+
+function sanitizeKeyPath (keyPath: string): string {
+  return keyPath.split('.').map(sanitizeKey).join('.')
+}
+
+function sanitizeDictKeys (obj: Dictionary<any>): Dictionary<any> {
+  const result: Dictionary<any> = {}
+  Object.keys(obj).forEach(key => {
+    result[sanitizeKeyPath(key)] = obj[key]
+  })
+  return result
+}
+
+function sanitizeAliasesForReturn (aliases: Dictionary<string[]>): Dictionary<string[]> {
+  const result: Dictionary<string[]> = {}
+  Object.keys(aliases).forEach(key => {
+    result[sanitizeKeyPath(key)] = aliases[key].map(sanitizeKeyPath)
+  })
+  return result
 }
 
 function stripQuotes (val: string): string {

@@ -1,0 +1,555 @@
+diff --git a/lib/yargs-parser.ts b/lib/yargs-parser.ts
+index 48a2d0f..86ae5f4 100644
+--- a/lib/yargs-parser.ts
++++ b/lib/yargs-parser.ts
+@@ -602,7 +602,7 @@ export class YargsParser {
+     function addNewAlias (key: string, alias: string): void {
+       if (!(flags.aliases[key] && flags.aliases[key].length)) {
+         flags.aliases[key] = [alias]
+-        newAliases[alias] = true
++        newAliases[sanitizeKeyPath(alias)] = true
+       }
+       if (!(flags.aliases[alias] && flags.aliases[alias].length)) {
+         addNewAlias(alias, key)
+@@ -757,7 +757,7 @@ export class YargsParser {
+               const value = maybeCoerceNumber(key, coerce(argv[key]))
+               ;(([] as string[]).concat(flags.aliases[key] || [], key)).forEach(ali => {
+                 applied.add(ali)
+-                argv[ali] = value
++                argv[sanitizeKeyPath(ali)] = value
+               })
+             } catch (err) {
+               error = err as Error
+@@ -780,7 +780,7 @@ export class YargsParser {
+       Object.keys(defaults).forEach(function (key) {
+         if (!hasKey(obj, key.split('.'))) {
+           setKey(obj, key.split('.'), defaults[key])
+-          if (canLog) defaulted[key] = true
++          if (canLog) defaulted[sanitizeKeyPath(key)] = true
+ 
+           ;(aliases[key] || []).forEach(function (x) {
+             if (hasKey(obj, x.split('.'))) return
+@@ -889,7 +889,7 @@ export class YargsParser {
+               const c = camelCase(x)
+               if (c !== key && flags.aliases[key].indexOf(c) === -1) {
+                 flags.aliases[key].push(c)
+-                newAliases[c] = true
++                newAliases[sanitizeKey(c)] = true
+               }
+             }
+           })
+@@ -899,7 +899,7 @@ export class YargsParser {
+               const c = decamelize(x, '-')
+               if (c !== key && flags.aliases[key].indexOf(c) === -1) {
+                 flags.aliases[key].push(c)
+-                newAliases[c] = true
++                newAliases[sanitizeKey(c)] = true
+               }
+             }
+           })
+@@ -1038,12 +1038,12 @@ export class YargsParser {
+     }
+ 
+     return {
+-      aliases: Object.assign({}, flags.aliases),
++      aliases: sanitizeAliasesForReturn(flags.aliases),
+       argv: Object.assign(argvReturn, argv),
+       configuration: configuration,
+-      defaulted: Object.assign({}, defaulted),
++      defaulted: sanitizeDictKeys(defaulted),
+       error: error,
+-      newAliases: Object.assign({}, newAliases)
++      newAliases: sanitizeDictKeys(newAliases)
+     }
+   }
+ }
+@@ -1105,13 +1105,33 @@ function increment (orig?: number | undefined): number {
+   return orig !== undefined ? orig + 1 : 1
+ }
+ 
+-// TODO(bcoe): in the next major version of yargs, switch to
+-// Object.create(null) for dot notation:
+ function sanitizeKey (key: string): string {
+   if (key === '__proto__') return '___proto___'
++  if (key === 'constructor') return '___constructor___'
++  if (key === 'prototype') return '___prototype___'
+   return key
+ }
+ 
++function sanitizeKeyPath (keyPath: string): string {
++  return keyPath.split('.').map(sanitizeKey).join('.')
++}
++
++function sanitizeDictKeys (obj: Dictionary<any>): Dictionary<any> {
++  const result: Dictionary<any> = {}
++  Object.keys(obj).forEach(key => {
++    result[sanitizeKeyPath(key)] = obj[key]
++  })
++  return result
++}
++
++function sanitizeAliasesForReturn (aliases: Dictionary<string[]>): Dictionary<string[]> {
++  const result: Dictionary<string[]> = {}
++  Object.keys(aliases).forEach(key => {
++    result[sanitizeKeyPath(key)] = aliases[key].map(sanitizeKeyPath)
++  })
++  return result
++}
++
+ function stripQuotes (val: string): string {
+   return (
+     typeof val === 'string' &&
+diff --git a/test/yargs-parser.mjs b/test/yargs-parser.mjs
+index 4c69237..2a74258 100644
+--- a/test/yargs-parser.mjs
++++ b/test/yargs-parser.mjs
+@@ -3995,6 +3995,449 @@ describe('yargs-parser', function () {
+     })
+   })
+ 
++  describe('prototype pollution protection', () => {
++    function assertPrototypesClean () {
++      expect({}.polluted).to.equal(undefined)
++      expect([].polluted).to.equal(undefined)
++      // eslint-disable-next-line no-extend-native
++      expect(function () {}.polluted).to.equal(undefined)
++    }
++
++    function assertPrototypeChainClean () {
++      expect(Object.prototype.polluted).to.equal(undefined)
++      expect(Array.prototype.polluted).to.equal(undefined)
++      expect(Function.prototype.polluted).to.equal(undefined)
++      expect(Object.prototype.nested).to.equal(undefined)
++    }
++
++    describe('CLI arguments', () => {
++      it('rewrites __proto__ key in CLI args', () => {
++        const argv = parser(['--__proto__', '200'])
++        argv.___proto___.should.equal(200)
++        expect(argv.__proto__).to.equal(undefined)
++        assertPrototypesClean()
++      })
++
++      it('rewrites constructor key in CLI args', () => {
++        const argv = parser(['--constructor', '99'])
++        argv.___constructor___.should.equal(99)
++        expect(argv.constructor).to.not.equal(99)
++        assertPrototypesClean()
++      })
++
++      it('rewrites prototype key in CLI args', () => {
++        const argv = parser(['--prototype', '99'])
++        argv.___prototype___.should.equal(99)
++        expect(argv.prototype).to.equal(undefined)
++        assertPrototypesClean()
++      })
++
++      it('rewrites __proto__ in dot-notation path segments', () => {
++        const argv = parser(['--a.__proto__.b', '99'])
++        argv.a.___proto___.b.should.equal(99)
++        expect(argv.a.__proto__).to.equal(undefined)
++        assertPrototypesClean()
++      })
++
++      it('rewrites constructor in dot-notation path segments', () => {
++        const argv = parser(['--a.constructor.b', '99'])
++        argv.a.___constructor___.b.should.equal(99)
++        assertPrototypesClean()
++      })
++
++      it('rewrites prototype in dot-notation path segments', () => {
++        const argv = parser(['--a.prototype.b', '99'])
++        argv.a.___prototype___.b.should.equal(99)
++        assertPrototypesClean()
++      })
++
++      it('rewrites constructor.prototype chain in dot-notation', () => {
++        const argv = parser(['--constructor.prototype.polluted', 'yes'])
++        argv.___constructor___.___prototype___.polluted.should.equal('yes')
++        assertPrototypeChainClean()
++      })
++
++      it('rewrites __proto__.constructor chain in dot-notation', () => {
++        const argv = parser(['--__proto__.constructor.polluted', 'yes'])
++        argv.___proto___.___constructor___.polluted.should.equal('yes')
++        assertPrototypeChainClean()
++      })
++    })
++
++    describe('dot-notation=false', () => {
++      it('does not split --constructor.prototype.x into nested keys', () => {
++        const argv = parser(['--constructor.prototype.polluted', 'yes'], {
++          configuration: { 'dot-notation': false }
++        })
++        argv['constructor.prototype.polluted'].should.equal('yes')
++        assertPrototypeChainClean()
++      })
++
++      it('does not split --__proto__.x into nested keys', () => {
++        const argv = parser(['--__proto__.polluted', 'yes'], {
++          configuration: { 'dot-notation': false }
++        })
++        argv['__proto__.polluted'].should.equal('yes')
++        expect(argv.__proto__).to.equal(undefined)
++        assertPrototypeChainClean()
++      })
++
++      it('still rewrites bare __proto__ key', () => {
++        const argv = parser(['--__proto__', '200'], {
++          configuration: { 'dot-notation': false }
++        })
++        argv.___proto___.should.equal(200)
++        assertPrototypesClean()
++      })
++
++      it('still rewrites bare constructor key', () => {
++        const argv = parser(['--constructor', '99'], {
++          configuration: { 'dot-notation': false }
++        })
++        argv.___constructor___.should.equal(99)
++        assertPrototypesClean()
++      })
++    })
++
++    describe('default values', () => {
++      it('rewrites __proto__ in defaults', () => {
++        const argv = parser([], {
++          default: {
++            __proto__: 100,
++            safe: 42
++          }
++        })
++        argv.___proto___.should.equal(100)
++        argv.safe.should.equal(42)
++        assertPrototypesClean()
++      })
++
++      it('rewrites constructor in defaults', () => {
++        const argv = parser([], {
++          default: {
++            constructor: 100,
++            safe: 42
++          }
++        })
++        argv.___constructor___.should.equal(100)
++        argv.safe.should.equal(42)
++        assertPrototypesClean()
++      })
++
++      it('rewrites prototype in defaults', () => {
++        const argv = parser([], {
++          default: {
++            prototype: 100,
++            safe: 42
++          }
++        })
++        argv.___prototype___.should.equal(100)
++        argv.safe.should.equal(42)
++        assertPrototypesClean()
++      })
++
++      it('rewrites __proto__ in dot-notation default keys', () => {
++        const argv = parser([], {
++          default: {
++            'a.__proto__.b': 99,
++            'a.safe': 42
++          }
++        })
++        argv.a.___proto___.b.should.equal(99)
++        argv.a.safe.should.equal(42)
++        assertPrototypesClean()
++      })
++
++      it('returns sanitized keys in defaulted', () => {
++        const detailed = parser.detailed([], {
++          default: {
++            __proto__: 100,
++            safe: 42
++          }
++        })
++        detailed.defaulted.___proto___.should.equal(true)
++        detailed.defaulted.safe.should.equal(true)
++        expect(detailed.defaulted.__proto__).to.equal(undefined)
++      })
++    })
++
++    describe('configObjects', () => {
++      it('rewrites __proto__ in configObjects', () => {
++        const configObj = JSON.parse('{"__proto__":{"polluted":"yes"},"safe":42}')
++        const argv = parser([], {
++          configObjects: [configObj]
++        })
++        argv.___proto___.polluted.should.equal('yes')
++        argv.safe.should.equal(42)
++        assertPrototypeChainClean()
++      })
++
++      it('rewrites constructor in configObjects', () => {
++        const argv = parser([], {
++          configObjects: [{
++            constructor: { polluted: 'yes' },
++            safe: 42
++          }]
++        })
++        argv.___constructor___.polluted.should.equal('yes')
++        argv.safe.should.equal(42)
++        assertPrototypeChainClean()
++      })
++
++      it('rewrites nested __proto__ in configObjects', () => {
++        const configObj = JSON.parse('{"a":{"__proto__":{"polluted":"yes"},"safe":42}}')
++        const argv = parser([], {
++          configObjects: [configObj]
++        })
++        argv.a.___proto___.polluted.should.equal('yes')
++        argv.a.safe.should.equal(42)
++        assertPrototypeChainClean()
++      })
++
++      it('preserves sibling keys when dangerous key is present in nested config', () => {
++        const configObj = JSON.parse('{"a":{"__proto__":{"polluted":"yes"},"constructor":{"polluted":"yes"},"safe":42,"alsoSafe":43}}')
++        const argv = parser([], {
++          configObjects: [configObj]
++        })
++        argv.a.___proto___.polluted.should.equal('yes')
++        argv.a.___constructor___.polluted.should.equal('yes')
++        argv.a.safe.should.equal(42)
++        argv.a.alsoSafe.should.equal(43)
++        assertPrototypeChainClean()
++      })
++
++      it('handles array with nested objects in configObjects safely', () => {
++        const configObj = JSON.parse('{"arr":[1,2,{"__proto__":{"polluted":"yes"},"safe":42}]}')
++        const argv = parser([], {
++          configObjects: [configObj]
++        })
++        argv.arr.should.eql([1, 2, JSON.parse('{"__proto__":{"polluted":"yes"},"safe":42}')])
++        assertPrototypeChainClean()
++      })
++    })
++
++    describe('config file', () => {
++      it('rewrites __proto__ from config file', function () {
++        const argv = parser(['--foo', 'bar'], {
++          alias: {
++            z: 'zoom'
++          },
++          default: {
++            settings: jsonPath
++          },
++          config: 'settings'
++        })
++        argv.___proto___.aaa.should.equal(99)
++        argv.bar.___proto___.bbb.should.equal(100)
++        argv.herp.should.equal('derp')
++        assertPrototypeChainClean()
++      })
++    })
++
++    describe('envPrefix', () => {
++      it('rewrites constructor from env vars', () => {
++        const prev = process.env.TEST_CONSTRUCTOR
++        process.env.TEST_CONSTRUCTOR = '99'
++        try {
++          const argv = parser([], {
++            envPrefix: 'TEST_'
++          })
++          argv.___constructor___.should.equal(99)
++          assertPrototypesClean()
++        } finally {
++          if (prev === undefined) {
++            delete process.env.TEST_CONSTRUCTOR
++          } else {
++            process.env.TEST_CONSTRUCTOR = prev
++          }
++        }
++      })
++
++      it('rewrites prototype from env vars', () => {
++        const prev = process.env.TEST_PROTOTYPE
++        process.env.TEST_PROTOTYPE = 'yes'
++        try {
++          const argv = parser([], {
++            envPrefix: 'TEST_'
++          })
++          argv.___prototype___.should.equal('yes')
++          assertPrototypesClean()
++        } finally {
++          if (prev === undefined) {
++            delete process.env.TEST_PROTOTYPE
++          } else {
++            process.env.TEST_PROTOTYPE = prev
++          }
++        }
++      })
++    })
++
++    describe('alias bidirectional safety', () => {
++      it('rewrites when safe key points to dangerous alias', () => {
++        const argv = parser(['--safe', 'hello'], {
++          alias: {
++            safe: ['__proto__']
++          }
++        })
++        argv.safe.should.equal('hello')
++        argv.___proto___.should.equal('hello')
++        assertPrototypesClean()
++      })
++
++      it('rewrites when dangerous key points to safe alias', () => {
++        const opts = JSON.parse('{"alias":{"__proto__":["safe"]}}')
++        const argv = parser(['--___proto___', 'hello'], opts)
++        argv.___proto___.should.equal('hello')
++        argv.safe.should.equal('hello')
++        assertPrototypesClean()
++      })
++
++      it('rewrites when safe key points to constructor alias', () => {
++        const argv = parser(['--safe', 'hello'], {
++          alias: {
++            safe: ['constructor']
++          }
++        })
++        argv.safe.should.equal('hello')
++        argv.___constructor___.should.equal('hello')
++        assertPrototypesClean()
++      })
++
++      it('rewrites dot-notation alias with dangerous segments', () => {
++        const argv = parser(['--safe', 'hello'], {
++          alias: {
++            safe: ['a.__proto__.b']
++          }
++        })
++        argv.safe.should.equal('hello')
++        argv.a.___proto___.b.should.equal('hello')
++        assertPrototypesClean()
++      })
++
++      it('rewrites aliases in detailed.aliases output', () => {
++        const detailed = parser.detailed([], {
++          alias: {
++            safe: ['__proto__'],
++            constructor: ['safe2']
++          }
++        })
++        expect(detailed.aliases.__proto__).to.equal(undefined)
++        detailed.aliases.safe.should.eql(['___proto___'])
++        detailed.aliases.___constructor___.should.eql(['safe2'])
++        assertPrototypesClean()
++      })
++
++      it('rewrites aliases in detailed.newAliases and detailed.defaulted output', () => {
++        const detailed = parser.detailed(['--my-constructor', '99'], {
++          default: {
++            __proto__: 100
++          }
++        })
++        expect(detailed.newAliases.__proto__).to.equal(undefined)
++        expect(detailed.defaulted.__proto__).to.equal(undefined)
++        detailed.defaulted.___proto___.should.equal(true)
++        assertPrototypesClean()
++      })
++    })
++
++    describe('camelCase alias safety', () => {
++      it('rewrites __proto__ derived from camelCase expansion of double-underscore key', () => {
++        const argv = parser(['--__proto__', '99'])
++        argv.___proto___.should.equal(99)
++        argv.Proto.should.equal(99)
++        assertPrototypesClean()
++      })
++    })
++
++    describe('array, narg, count, coerce integration', () => {
++      it('rewrites __proto__ in array values', () => {
++        const argv = parser(['--arr', '1', '--arr', '2'], {
++          array: ['arr'],
++          default: {
++            arr: [0]
++          }
++        })
++        argv.arr.should.eql([1, 2])
++        assertPrototypesClean()
++      })
++
++      it('rewrites dangerous array default', () => {
++        const argv = parser([], {
++          array: ['__proto__']
++        })
++        expect(argv.___proto___).to.eql([])
++        assertPrototypesClean()
++      })
++
++      it('rewrites __proto__ with narg', () => {
++        const argv = parser(['--a', 'x', 'y'], {
++          narg: {
++            a: 2
++          }
++        })
++        argv.a.should.eql(['x', 'y'])
++        assertPrototypesClean()
++      })
++
++      it('rewrites __proto__ with count', () => {
++        const argv = parser(['--a', '--a', '--a'], {
++          count: ['a']
++        })
++        argv.a.should.equal(3)
++        assertPrototypesClean()
++      })
++
++      it('rewrites __proto__ in coerce write-back', () => {
++        const argv = parser(['--a', '10'], {
++          coerce: {
++            a: (v) => v * 2
++          }
++        })
++        argv.a.should.equal(20)
++        assertPrototypesClean()
++      })
++
++      it('coerce write-back does not pollute when alias is dangerous', () => {
++        const argv = parser(['--safe', '10'], {
++          alias: {
++            safe: ['__proto__']
++          },
++          coerce: {
++            safe: (v) => v * 2
++          }
++        })
++        argv.safe.should.equal(20)
++        argv.___proto___.should.equal(20)
++        expect(argv.__proto__).to.equal(undefined)
++        assertPrototypesClean()
++      })
++
++      it('rewrites coerce with constructor target', () => {
++        const argv = parser(['--constructor', '10'], {
++          coerce: {
++            constructor: (v) => v * 2
++          }
++        })
++        argv.___constructor___.should.equal(20)
++        assertPrototypesClean()
++      })
++    })
++
++    describe('dangerous key with all three types', () => {
++      it('rewrites __proto__, constructor, and prototype in a single parse', () => {
++        const argv = parser([
++          '--__proto__.polluted', 'yes',
++          '--constructor.polluted', 'yes',
++          '--prototype.polluted', 'yes'
++        ])
++        argv.___proto___.polluted.should.equal('yes')
++        argv.___constructor___.polluted.should.equal('yes')
++        argv.___prototype___.polluted.should.equal('yes')
++        assertPrototypeChainClean()
++      })
++    })
++  })
++
+   // See: https://github.com/facebook/jest/issues/9517
+   it('does not collect arguments configured as booleans into implicit array', () => {
+     const parse = parser(['--infinite', 'true', '--infinite', 'true', '--no-infinite'], {
