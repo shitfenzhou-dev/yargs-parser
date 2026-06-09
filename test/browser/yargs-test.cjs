@@ -46,6 +46,31 @@ async function tests () {
     })
     console.info('✅ parse with aliases')
   }
+
+  {
+    const output = await parse('--hello world', { envPrefix: 'APP_' })
+    deepStrictEqual(output, {
+      _: [],
+      hello: 'world'
+    })
+    console.info('✅ envPrefix does not throw in browser')
+  }
+
+  {
+    const output = await parse('', { envPrefix: 'APP_' })
+    deepStrictEqual(output._, [])
+    console.info('✅ envPrefix with empty args does not inject env vars')
+  }
+
+  {
+    const output = await parse('--app-value cli', {
+      envPrefix: 'APP_',
+      default: { appValue: 'default' }
+    })
+    deepStrictEqual(output['app-value'], 'cli')
+    deepStrictEqual(output.appValue, 'cli')
+    console.info('✅ CLI value takes priority over default when env is empty in browser')
+  }
 }
 
 tests().then(() => {
