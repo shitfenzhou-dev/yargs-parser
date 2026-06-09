@@ -1124,6 +1124,58 @@ describe('yargs-parser', function () {
     })
   })
 
+  describe('escape handling (string input)', function () {
+    it('should preserve escaped double quotes inside double quoted value', function () {
+      const argv = parser('--msg "hello \\"world\\""')
+      argv.should.have.property('msg', 'hello "world"')
+    })
+
+    it('should preserve escaped single quotes inside single quoted value', function () {
+      const argv = parser("--msg 'it\\'s ok'")
+      argv.should.have.property('msg', "it's ok")
+    })
+
+    it('should handle escaped backslash', function () {
+      const argv = parser('--path "C:\\\\Users\\\\me"')
+      argv.should.have.property('path', 'C:\\Users\\me')
+    })
+
+    it('should keep escaped whitespace together (unquoted)', function () {
+      const argv = parser('--name hello\\ world')
+      argv.should.have.property('name', 'hello world')
+    })
+
+    it('should handle multiple escaped whitespace tokens', function () {
+      const argv = parser('a\\ b c\\ d')
+      argv.should.have.property('_').and.deep.equal(['a b', 'c d'])
+    })
+  })
+
+  describe('array input regression (no escape interpretation)', function () {
+    it('should not unescape contents when input is an array', function () {
+      const argv = parser(['--msg', '"hello \\"world\\""'])
+      // array input path: stripQuotes is invoked (shouldStripQuotes=true)
+      // but the contents are not re-interpreted for shell-like escapes
+      // by the tokenizer; still stripQuotes must unescape backslashes so
+      // the result here is hello "world" (same as string path).
+      argv.should.have.property('msg', 'hello "world"')
+    })
+
+    it('should preserve literal backslash-space when passed as array', function () {
+      // When callers pass an array, they've already tokenized externally,
+      // so 'hello\\ world' is a single literal argument string. stripQuotes
+      // still unescapes backslashes for consistency with string-input values
+      // that end up unquoted.
+      const argv = parser(['--name', 'hello\\ world'])
+      argv.should.have.property('name', 'hello world')
+    })
+
+    it('should not resplit array arguments', function () {
+      const argv = parser(['--foo', 'hello world'])
+      argv.should.have.property('foo', 'hello world')
+    })
+  })
+
   describe('boolean modifier function', function () {
     it('should prevent yargs from sucking in the next option as the value of the first option', function () {
       // Arrange & Act

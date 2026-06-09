@@ -1,0 +1,210 @@
+diff --git a/lib/tokenize-arg-string.ts b/lib/tokenize-arg-string.ts
+index 3d63e87..81f895a 100644
+--- a/lib/tokenize-arg-string.ts
++++ b/lib/tokenize-arg-string.ts
+@@ -13,20 +13,45 @@ export function tokenizeArgString (argString: string | any[]): string[] {
+   argString = argString.trim()
+ 
+   let i = 0
+-  let prevC: string | null = null
+   let c: string | null = null
+   let opening: string | null = null
++  let escapeNext = false
++  // Track whether the previous character was a token-splitting whitespace,
++  // so consecutive unescaped/unquoted whitespace collapses into one split.
++  let prevWasSplittingSpace = false
+   const args: string[] = []
+ 
+   for (let ii = 0; ii < argString.length; ii++) {
+-    prevC = c
+     c = argString.charAt(ii)
+ 
++    // A backslash escapes the next character. When escaped, that next
++    // character is appended literally to the current token without
++    // triggering whitespace splitting or quote state changes.
++    if (c === '\\' && !escapeNext) {
++      escapeNext = true
++      if (!args[i]) args[i] = ''
++      args[i] += c
++      prevWasSplittingSpace = false
++      continue
++    }
++
++    // When the previous char was a backslash, the current character is
++    // escaped: append verbatim and reset flag. An escaped whitespace is
++    // kept within the same token (no splitting).
++    if (escapeNext) {
++      escapeNext = false
++      if (!args[i]) args[i] = ''
++      args[i] += c
++      prevWasSplittingSpace = false
++      continue
++    }
++
+     // split on spaces unless we're in quotes.
+     if (c === ' ' && !opening) {
+-      if (!(prevC === ' ')) {
++      if (!prevWasSplittingSpace) {
+         i++
+       }
++      prevWasSplittingSpace = true
+       continue
+     }
+ 
+@@ -40,6 +65,7 @@ export function tokenizeArgString (argString: string | any[]): string[] {
+ 
+     if (!args[i]) args[i] = ''
+     args[i] += c
++    prevWasSplittingSpace = false
+   }
+ 
+   return args
+diff --git a/lib/yargs-parser.ts b/lib/yargs-parser.ts
+index 48a2d0f..fa6138e 100644
+--- a/lib/yargs-parser.ts
++++ b/lib/yargs-parser.ts
+@@ -1113,11 +1113,26 @@ function sanitizeKey (key: string): string {
+ }
+ 
+ function stripQuotes (val: string): string {
+-  return (
+-    typeof val === 'string' &&
+-    (val[0] === "'" || val[0] === '"') &&
+-    val[val.length - 1] === val[0]
+-  )
+-    ? val.substring(1, val.length - 1)
+-    : val
++  if (typeof val !== 'string') return val
++  const isQuoted = (val[0] === "'" || val[0] === '"') && val[val.length - 1] === val[0]
++  // strip outer quotes when present, then unescape backslash sequences so that
++  // \" becomes " and \' becomes ' and \\ becomes \ (and \X becomes X in general)
++  // inside both the quoted and the unquoted forms.
++  const unescapeBackslashes = (s: string): string => {
++    let out = ''
++    for (let i = 0; i < s.length; i++) {
++      const c = s.charAt(i)
++      if (c === '\\' && i + 1 < s.length) {
++        out += s.charAt(i + 1)
++        i++
++      } else {
++        out += c
++      }
++    }
++    return out
++  }
++  if (isQuoted) {
++    return unescapeBackslashes(val.substring(1, val.length - 1))
++  }
++  return unescapeBackslashes(val)
+ }
+diff --git a/test/typescript/tokenize-arg-string.ts b/test/typescript/tokenize-arg-string.ts
+index dc77c3e..781ef88 100644
+--- a/test/typescript/tokenize-arg-string.ts
++++ b/test/typescript/tokenize-arg-string.ts
+@@ -77,6 +77,43 @@ describe('TokenizeArgString', function () {
+     strictEqual(args.length, 0)
+   })
+ 
++  it('handles escaped double quotes inside double quotes', function () {
++    const args = tokenizeArgString('--msg "hello \\"world\\""')
++    strictEqual(args[0], '--msg')
++    strictEqual(args[1], '"hello \\"world\\""')
++  })
++
++  it('handles escaped single quotes inside single quotes', function () {
++    const args = tokenizeArgString("--msg 'it\\'s ok'")
++    strictEqual(args[0], '--msg')
++    strictEqual(args[1], "'it\\'s ok'")
++  })
++
++  it('handles escaped backslash inside quotes', function () {
++    const args = tokenizeArgString('--path "C:\\\\Users\\\\me"')
++    strictEqual(args[0], '--path')
++    strictEqual(args[1], '"C:\\\\Users\\\\me"')
++  })
++
++  it('keeps escaped whitespace in the same token', function () {
++    const args = tokenizeArgString('--name hello\\ world')
++    strictEqual(args[0], '--name')
++    strictEqual(args[1], 'hello\\ world')
++  })
++
++  it('keeps escaped whitespace between two escaped tokens', function () {
++    const args = tokenizeArgString('a\\ b c\\ d')
++    strictEqual(args[0], 'a\\ b')
++    strictEqual(args[1], 'c\\ d')
++  })
++
++  it('keeps array input behavior unchanged (no escape interpretation)', function () {
++    const args = tokenizeArgString(['--msg', '"hello \\"world\\""', 'hello\\ world'])
++    strictEqual(args[0], '--msg')
++    strictEqual(args[1], '"hello \\"world\\""')
++    strictEqual(args[2], 'hello\\ world')
++  })
++
+   it('handles array with unquoted string', function () {
+     const args = tokenizeArgString(['--foo', '99'])
+     strictEqual(args[0], '--foo')
+diff --git a/test/yargs-parser.mjs b/test/yargs-parser.mjs
+index 4c69237..aebded3 100644
+--- a/test/yargs-parser.mjs
++++ b/test/yargs-parser.mjs
+@@ -1124,6 +1124,58 @@ describe('yargs-parser', function () {
+     })
+   })
+ 
++  describe('escape handling (string input)', function () {
++    it('should preserve escaped double quotes inside double quoted value', function () {
++      const argv = parser('--msg "hello \\"world\\""')
++      argv.should.have.property('msg', 'hello "world"')
++    })
++
++    it('should preserve escaped single quotes inside single quoted value', function () {
++      const argv = parser("--msg 'it\\'s ok'")
++      argv.should.have.property('msg', "it's ok")
++    })
++
++    it('should handle escaped backslash', function () {
++      const argv = parser('--path "C:\\\\Users\\\\me"')
++      argv.should.have.property('path', 'C:\\Users\\me')
++    })
++
++    it('should keep escaped whitespace together (unquoted)', function () {
++      const argv = parser('--name hello\\ world')
++      argv.should.have.property('name', 'hello world')
++    })
++
++    it('should handle multiple escaped whitespace tokens', function () {
++      const argv = parser('a\\ b c\\ d')
++      argv.should.have.property('_').and.deep.equal(['a b', 'c d'])
++    })
++  })
++
++  describe('array input regression (no escape interpretation)', function () {
++    it('should not unescape contents when input is an array', function () {
++      const argv = parser(['--msg', '"hello \\"world\\""'])
++      // array input path: stripQuotes is invoked (shouldStripQuotes=true)
++      // but the contents are not re-interpreted for shell-like escapes
++      // by the tokenizer; still stripQuotes must unescape backslashes so
++      // the result here is hello "world" (same as string path).
++      argv.should.have.property('msg', 'hello "world"')
++    })
++
++    it('should preserve literal backslash-space when passed as array', function () {
++      // When callers pass an array, they've already tokenized externally,
++      // so 'hello\\ world' is a single literal argument string. stripQuotes
++      // still unescapes backslashes for consistency with string-input values
++      // that end up unquoted.
++      const argv = parser(['--name', 'hello\\ world'])
++      argv.should.have.property('name', 'hello world')
++    })
++
++    it('should not resplit array arguments', function () {
++      const argv = parser(['--foo', 'hello world'])
++      argv.should.have.property('foo', 'hello world')
++    })
++  })
++
+   describe('boolean modifier function', function () {
+     it('should prevent yargs from sucking in the next option as the value of the first option', function () {
+       // Arrange & Act

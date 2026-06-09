@@ -13,20 +13,45 @@ export function tokenizeArgString (argString: string | any[]): string[] {
   argString = argString.trim()
 
   let i = 0
-  let prevC: string | null = null
   let c: string | null = null
   let opening: string | null = null
+  let escapeNext = false
+  // Track whether the previous character was a token-splitting whitespace,
+  // so consecutive unescaped/unquoted whitespace collapses into one split.
+  let prevWasSplittingSpace = false
   const args: string[] = []
 
   for (let ii = 0; ii < argString.length; ii++) {
-    prevC = c
     c = argString.charAt(ii)
+
+    // A backslash escapes the next character. When escaped, that next
+    // character is appended literally to the current token without
+    // triggering whitespace splitting or quote state changes.
+    if (c === '\\' && !escapeNext) {
+      escapeNext = true
+      if (!args[i]) args[i] = ''
+      args[i] += c
+      prevWasSplittingSpace = false
+      continue
+    }
+
+    // When the previous char was a backslash, the current character is
+    // escaped: append verbatim and reset flag. An escaped whitespace is
+    // kept within the same token (no splitting).
+    if (escapeNext) {
+      escapeNext = false
+      if (!args[i]) args[i] = ''
+      args[i] += c
+      prevWasSplittingSpace = false
+      continue
+    }
 
     // split on spaces unless we're in quotes.
     if (c === ' ' && !opening) {
-      if (!(prevC === ' ')) {
+      if (!prevWasSplittingSpace) {
         i++
       }
+      prevWasSplittingSpace = true
       continue
     }
 
@@ -40,6 +65,7 @@ export function tokenizeArgString (argString: string | any[]): string[] {
 
     if (!args[i]) args[i] = ''
     args[i] += c
+    prevWasSplittingSpace = false
   }
 
   return args

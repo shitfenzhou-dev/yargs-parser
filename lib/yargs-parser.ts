@@ -1113,11 +1113,26 @@ function sanitizeKey (key: string): string {
 }
 
 function stripQuotes (val: string): string {
-  return (
-    typeof val === 'string' &&
-    (val[0] === "'" || val[0] === '"') &&
-    val[val.length - 1] === val[0]
-  )
-    ? val.substring(1, val.length - 1)
-    : val
+  if (typeof val !== 'string') return val
+  const isQuoted = (val[0] === "'" || val[0] === '"') && val[val.length - 1] === val[0]
+  // strip outer quotes when present, then unescape backslash sequences so that
+  // \" becomes " and \' becomes ' and \\ becomes \ (and \X becomes X in general)
+  // inside both the quoted and the unquoted forms.
+  const unescapeBackslashes = (s: string): string => {
+    let out = ''
+    for (let i = 0; i < s.length; i++) {
+      const c = s.charAt(i)
+      if (c === '\\' && i + 1 < s.length) {
+        out += s.charAt(i + 1)
+        i++
+      } else {
+        out += c
+      }
+    }
+    return out
+  }
+  if (isQuoted) {
+    return unescapeBackslashes(val.substring(1, val.length - 1))
+  }
+  return unescapeBackslashes(val)
 }
