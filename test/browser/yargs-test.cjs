@@ -46,6 +46,39 @@ async function tests () {
     })
     console.info('✅ parse with aliases')
   }
+
+  {
+    const output = await parse('--hello world', {
+      envPrefix: 'APP_'
+    })
+    deepStrictEqual(output, {
+      _: [],
+      hello: 'world'
+    })
+    console.info('✅ parse with envPrefix')
+  }
+
+  {
+    const output = await parse('', {
+      envPrefix: 'APP_'
+    })
+    deepStrictEqual(output, {
+      _: []
+    })
+    console.info('✅ parse empty with envPrefix')
+  }
+
+  {
+    const output = await parse('--app-value cli', {
+      envPrefix: 'APP_',
+      default: { appValue: 'default' }
+    })
+    deepStrictEqual(output, {
+      _: [],
+      appValue: 'cli'
+    })
+    console.info('✅ parse with envPrefix and default')
+  }
 }
 
 tests().then(() => {
