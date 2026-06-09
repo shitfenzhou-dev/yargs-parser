@@ -1,132 +1,137 @@
-diff --git a/browser.js b/browser.js
-index 241202c..292e522 100644
---- a/browser.js
-+++ b/browser.js
-@@ -12,7 +12,9 @@ const parser = new YargsParser({
-   require: () => {
-     throw Error('loading config from files not currently supported in browser')
-   },
--  env: () => {}
-+  env: () => {
-+    return {}
-+  }
- })
- 
- const yargsParser = function Parser (args, opts) {
-diff --git a/test/browser/yargs-test.cjs b/test/browser/yargs-test.cjs
-index 92d1ee0..48e9487 100644
---- a/test/browser/yargs-test.cjs
-+++ b/test/browser/yargs-test.cjs
-@@ -1,24 +1,27 @@
--const { deepStrictEqual } = require('assert')
-+const { deepStrictEqual, strictEqual } = require('assert')
- const puppeteer = require('puppeteer')
- 
--// Runs a browser window with a given argv string and options:
- let browser
- async function parse (argv, opts) {
-   if (!browser) {
--    // The developer install of Chromium is blocked by apparmor changes in Ubuntu 22.04.
--    // We are only running local tests and so easiest setup is to skip the sandbox.
--    browser = await puppeteer.launch({ 
--      args: ['--no-sandbox', '--disable-setuid-sandbox'] 
--  })
-+    browser = await puppeteer.launch({
-+      args: ['--no-sandbox', '--disable-setuid-sandbox']
-+    })
-   }
-+
-   const page = await browser.newPage()
--  opts = encodeURIComponent(JSON.stringify(opts))
--  await page.goto(`http://127.0.0.1:8080/test/browser/yargs-test?argv=${encodeURIComponent(argv)}&opts=${opts}`)
-+  const searchParams = new URLSearchParams({
-+    argv,
-+    opts: JSON.stringify(opts || {})
-+  })
-+
-+  await page.goto(`http://127.0.0.1:8080/test/browser/yargs-test.html?${searchParams.toString()}`)
-   const element = await page.$('#output')
--  return JSON.parse(await page.evaluate(element => element.textContent, element))
-+  const output = JSON.parse(await page.evaluate(element => element.textContent, element))
-+  await page.close()
-+  return output
- }
- 
--// The actual tests:
- async function tests () {
-   {
-     const output = await parse('--hello world --x 102')
-@@ -46,14 +49,47 @@ async function tests () {
-     })
-     console.info('✅ parse with aliases')
-   }
-+
-+  {
-+    const output = await parse('--hello world', {
-+      envPrefix: 'APP_'
-+    })
-+    deepStrictEqual(output, {
-+      _: [],
-+      hello: 'world'
-+    })
-+    console.info('✅ envPrefix does not throw in browser')
-+  }
-+
-+  {
-+    const output = await parse('', {
-+      envPrefix: 'APP_'
-+    })
-+    deepStrictEqual(output, {
-+      _: []
-+    })
-+    console.info('✅ empty browser env does not inject values')
-+  }
-+
-+  {
-+    const output = await parse('--app-value cli', {
-+      envPrefix: 'APP_',
-+      default: {
-+        appValue: 'default'
-+      }
-+    })
-+    deepStrictEqual(output._, [])
-+    strictEqual(output.appValue, 'cli')
-+    console.info('✅ browser env does not override CLI/default precedence')
-+  }
- }
- 
--tests().then(() => {
-+tests().then(async () => {
-   console.info('👌all tests finished')
--  browser.close()
--}).catch((err) => {
-+  if (browser) await browser.close()
-+}).catch(async (err) => {
-   console.error(err.stack)
-   console.error('❌some tests failed')
-   process.exitCode = 1
--  browser.close()
-+  if (browser) await browser.close()
- })
-diff --git a/test/browser/yargs-test.html b/test/browser/yargs-test.html
-index 71a7ff9..312fdb8 100644
---- a/test/browser/yargs-test.html
-+++ b/test/browser/yargs-test.html
-@@ -6,13 +6,13 @@
-     import parser from 'http://127.0.0.1:8080/browser.js';
- 
-     // Grab argv from the URL's GET parameters:
--    const match = window.location.href.match(/.*argv=(?<argv>[^&]*)&opts=(?<opts>.*)$/);
--    const argv = decodeURIComponent(match.groups.argv);
-+    const searchParams = new URLSearchParams(window.location.search);
-+    const argv = searchParams.get('argv') || '';
-     let opts = {}
-     try {
--      opts = JSON.parse(decodeURIComponent(match.groups.opts))
-+      opts = JSON.parse(searchParams.get('opts') || '')
-     } catch (_err) {}
--    
-+
-     // Run yargs parser in browser context:
-     const parsed = parser(argv, opts);
-     const output = document.getElementById("output");
+diff --git a/5.1.1.patch b/5.1.1.patch
+index 627e2ef..e69de29 100644
+--- a/5.1.1.patch
++++ b/5.1.1.patch
+@@ -1,132 +0,0 @@
+-diff --git a/browser.js b/browser.js
+-index 241202c..292e522 100644
+---- a/browser.js
+-+++ b/browser.js
+-@@ -12,7 +12,9 @@ const parser = new YargsParser({
+-   require: () => {
+-     throw Error('loading config from files not currently supported in browser')
+-   },
+--  env: () => {}
+-+  env: () => {
+-+    return {}
+-+  }
+- })
+- 
+- const yargsParser = function Parser (args, opts) {
+-diff --git a/test/browser/yargs-test.cjs b/test/browser/yargs-test.cjs
+-index 92d1ee0..48e9487 100644
+---- a/test/browser/yargs-test.cjs
+-+++ b/test/browser/yargs-test.cjs
+-@@ -1,24 +1,27 @@
+--const { deepStrictEqual } = require('assert')
+-+const { deepStrictEqual, strictEqual } = require('assert')
+- const puppeteer = require('puppeteer')
+- 
+--// Runs a browser window with a given argv string and options:
+- let browser
+- async function parse (argv, opts) {
+-   if (!browser) {
+--    // The developer install of Chromium is blocked by apparmor changes in Ubuntu 22.04.
+--    // We are only running local tests and so easiest setup is to skip the sandbox.
+--    browser = await puppeteer.launch({ 
+--      args: ['--no-sandbox', '--disable-setuid-sandbox'] 
+--  })
+-+    browser = await puppeteer.launch({
+-+      args: ['--no-sandbox', '--disable-setuid-sandbox']
+-+    })
+-   }
+-+
+-   const page = await browser.newPage()
+--  opts = encodeURIComponent(JSON.stringify(opts))
+--  await page.goto(`http://127.0.0.1:8080/test/browser/yargs-test?argv=${encodeURIComponent(argv)}&opts=${opts}`)
+-+  const searchParams = new URLSearchParams({
+-+    argv,
+-+    opts: JSON.stringify(opts || {})
+-+  })
+-+
+-+  await page.goto(`http://127.0.0.1:8080/test/browser/yargs-test.html?${searchParams.toString()}`)
+-   const element = await page.$('#output')
+--  return JSON.parse(await page.evaluate(element => element.textContent, element))
+-+  const output = JSON.parse(await page.evaluate(element => element.textContent, element))
+-+  await page.close()
+-+  return output
+- }
+- 
+--// The actual tests:
+- async function tests () {
+-   {
+-     const output = await parse('--hello world --x 102')
+-@@ -46,14 +49,47 @@ async function tests () {
+-     })
+-     console.info('✅ parse with aliases')
+-   }
+-+
+-+  {
+-+    const output = await parse('--hello world', {
+-+      envPrefix: 'APP_'
+-+    })
+-+    deepStrictEqual(output, {
+-+      _: [],
+-+      hello: 'world'
+-+    })
+-+    console.info('✅ envPrefix does not throw in browser')
+-+  }
+-+
+-+  {
+-+    const output = await parse('', {
+-+      envPrefix: 'APP_'
+-+    })
+-+    deepStrictEqual(output, {
+-+      _: []
+-+    })
+-+    console.info('✅ empty browser env does not inject values')
+-+  }
+-+
+-+  {
+-+    const output = await parse('--app-value cli', {
+-+      envPrefix: 'APP_',
+-+      default: {
+-+        appValue: 'default'
+-+      }
+-+    })
+-+    deepStrictEqual(output._, [])
+-+    strictEqual(output.appValue, 'cli')
+-+    console.info('✅ browser env does not override CLI/default precedence')
+-+  }
+- }
+- 
+--tests().then(() => {
+-+tests().then(async () => {
+-   console.info('👌all tests finished')
+--  browser.close()
+--}).catch((err) => {
+-+  if (browser) await browser.close()
+-+}).catch(async (err) => {
+-   console.error(err.stack)
+-   console.error('❌some tests failed')
+-   process.exitCode = 1
+--  browser.close()
+-+  if (browser) await browser.close()
+- })
+-diff --git a/test/browser/yargs-test.html b/test/browser/yargs-test.html
+-index 71a7ff9..312fdb8 100644
+---- a/test/browser/yargs-test.html
+-+++ b/test/browser/yargs-test.html
+-@@ -6,13 +6,13 @@
+-     import parser from 'http://127.0.0.1:8080/browser.js';
+- 
+-     // Grab argv from the URL's GET parameters:
+--    const match = window.location.href.match(/.*argv=(?<argv>[^&]*)&opts=(?<opts>.*)$/);
+--    const argv = decodeURIComponent(match.groups.argv);
+-+    const searchParams = new URLSearchParams(window.location.search);
+-+    const argv = searchParams.get('argv') || '';
+-     let opts = {}
+-     try {
+--      opts = JSON.parse(decodeURIComponent(match.groups.opts))
+-+      opts = JSON.parse(searchParams.get('opts') || '')
+-     } catch (_err) {}
+--    
+-+
+-     // Run yargs parser in browser context:
+-     const parsed = parser(argv, opts);
+-     const output = document.getElementById("output");
