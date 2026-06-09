@@ -4076,6 +4076,295 @@ describe('yargs-parser', function () {
     })
   })
 
+  describe('integer', function () {
+    it('parses plain integer values', function () {
+      const result = parser(['--port', '3000'], { integer: ['port'] })
+      result.should.have.property('port', 3000)
+    })
+
+    it('parses hex integer values', function () {
+      const result = parser(['--port', '0x10'], { integer: ['port'] })
+      result.should.have.property('port', 16)
+    })
+
+    it('parses scientific notation that resolves to an integer', function () {
+      const result = parser(['--port=1e3'], { integer: ['port'] })
+      result.should.have.property('port', 1000)
+    })
+
+    it('rejects decimal values via detailed error', function () {
+      const argv = parser.detailed(['--port', '3.14'], { integer: ['port'] })
+      argv.error.should.be.ok
+      argv.error.message.should.match(/Invalid integer/)
+      argv.error.message.should.match(/port/)
+      argv.error.message.should.match(/3\.14/)
+    })
+
+    it('rejects scientific notation with decimal via detailed error', function () {
+      const argv = parser.detailed(['--port', '1.5e2'], { integer: ['port'] })
+      argv.error.should.be.ok
+      argv.error.message.should.match(/Invalid integer/)
+      argv.error.message.should.match(/port/)
+    })
+
+    it('rejects non-numeric strings via detailed error', function () {
+      const argv = parser.detailed(['--port', 'abc'], { integer: ['port'] })
+      argv.error.should.be.ok
+      argv.error.message.should.match(/Invalid integer/)
+      argv.error.message.should.match(/port/)
+    })
+
+    it('rejects incomplete scientific notation via detailed error', function () {
+      const argv = parser.detailed(['--port', '1e'], { integer: ['port'] })
+      argv.error.should.be.ok
+      argv.error.message.should.match(/Invalid integer/)
+    })
+
+    it('rejects values beyond Number.MAX_SAFE_INTEGER via detailed error', function () {
+      const argv = parser.detailed(['--big', String(Number.MAX_SAFE_INTEGER + 1)], { integer: ['big'] })
+      argv.error.should.be.ok
+      argv.error.message.should.match(/Invalid integer/)
+    })
+
+    it('accepts Number.MAX_SAFE_INTEGER as valid', function () {
+      const result = parser(['--big', String(Number.MAX_SAFE_INTEGER)], { integer: ['big'] })
+      result.should.have.property('big', Number.MAX_SAFE_INTEGER)
+    })
+
+    it('rejects leading-zero octal-like numbers via detailed error', function () {
+      const argv = parser.detailed(['--port', '0100'], { integer: ['port'] })
+      argv.error.should.be.ok
+      argv.error.message.should.match(/Invalid integer/)
+    })
+
+    it('rejects leading-zero decimal-like numbers via detailed error', function () {
+      const argv = parser.detailed(['--port', '00.1'], { integer: ['port'] })
+      argv.error.should.be.ok
+      argv.error.message.should.match(/Invalid integer/)
+    })
+
+    it('accepts negative integers', function () {
+      const result = parser(['--val', '-42'], { integer: ['val'] })
+      result.should.have.property('val', -42)
+    })
+
+    it('accepts zero', function () {
+      const result = parser(['--val', '0'], { integer: ['val'] })
+      result.should.have.property('val', 0)
+    })
+
+    describe('array integer', function () {
+      it('parses array of integers via array object syntax', function () {
+        const result = parser(['--ids', '1', '2'], {
+          array: [{ key: 'ids', integer: true }]
+        })
+        result.should.have.property('ids').that.is.an('array').and.to.deep.equal([1, 2])
+      })
+
+      it('handles empty array for integer type', function () {
+        const result = parser(['--ids', '-a'], {
+          array: [{ key: 'ids', integer: true }]
+        })
+        result.should.have.property('ids').that.is.an('array').and.to.deep.equal([])
+      })
+
+      it('handles single element array for integer type', function () {
+        const result = parser(['--ids', '42'], {
+          array: [{ key: 'ids', integer: true }]
+        })
+        result.should.have.property('ids').that.is.an('array').and.to.deep.equal([42])
+      })
+    })
+
+    describe('alias', function () {
+      it('applies integer coercion through alias', function () {
+        const result = parser(['-p', '3000'], {
+          integer: ['port'],
+          alias: { port: ['p'] }
+        })
+        result.should.have.property('p', 3000)
+        result.should.have.property('port', 3000)
+      })
+
+      it('applies integer validation through alias', function () {
+        const argv = parser.detailed(['--p', 'abc'], {
+          integer: ['port'],
+          alias: { port: ['p'] }
+        })
+        argv.error.should.be.ok
+        argv.error.message.should.match(/Invalid integer/)
+      })
+    })
+
+    describe('default', function () {
+      it('respects integer default value', function () {
+        const result = parser([], {
+          integer: ['port'],
+          default: { port: 8080 }
+        })
+        result.should.have.property('port', 8080)
+      })
+
+      it('CLI integer value overrides default', function () {
+        const result = parser(['--port', '3000'], {
+          integer: ['port'],
+          default: { port: 8080 }
+        })
+        result.should.have.property('port', 3000)
+      })
+
+      it('reports error when default is not a valid integer', function () {
+        const argv = parser.detailed([], {
+          integer: ['port'],
+          default: { port: 3.14 }
+        })
+        argv.error.should.be.ok
+        argv.error.message.should.match(/Invalid integer/)
+      })
+    })
+
+    describe('configObjects', function () {
+      it('respects integer from configObjects', function () {
+        const result = parser([], {
+          integer: ['port'],
+          configObjects: [{ port: 3000 }]
+        })
+        result.should.have.property('port', 3000)
+      })
+
+      it('invalid integer in configObjects sets error', function () {
+        const argv = parser.detailed([], {
+          integer: ['port'],
+          configObjects: [{ port: 'abc' }]
+        })
+        argv.error.should.be.ok
+        argv.error.message.should.match(/Invalid integer/)
+      })
+    })
+
+    describe('coerce', function () {
+      it('runs coerce before integer validation', function () {
+        const result = parser(['--port', '3000'], {
+          integer: ['port'],
+          coerce: {
+            port: function (val) { return Number(val) + 1 }
+          }
+        })
+        result.should.have.property('port', 3001)
+      })
+
+      it('coerce returning non-integer sets error', function () {
+        const argv = parser.detailed(['--port', '3000'], {
+          integer: ['port'],
+          coerce: {
+            port: function () { return 'not-an-integer' }
+          }
+        })
+        argv.error.should.be.ok
+        argv.error.message.should.match(/Invalid integer/)
+      })
+
+      it('coerce returning decimal sets error', function () {
+        const argv = parser.detailed(['--port', '3000'], {
+          integer: ['port'],
+          coerce: {
+            port: function () { return 3.14 }
+          }
+        })
+        argv.error.should.be.ok
+        argv.error.message.should.match(/Invalid integer/)
+      })
+    })
+
+    describe('configuration conflicts', function () {
+      it('integer conflicts with string', function () {
+        const argv = parser.detailed(['--key', 'val'], {
+          integer: ['key'],
+          string: ['key']
+        })
+        argv.error.should.be.ok
+        argv.error.message.should.match(/opts\.integer excludes opts\.string/)
+      })
+
+      it('integer conflicts with boolean', function () {
+        const argv = parser.detailed(['--key', 'val'], {
+          integer: ['key'],
+          boolean: ['key']
+        })
+        argv.error.should.be.ok
+        argv.error.message.should.match(/opts\.integer excludes opts\.boolean/)
+      })
+
+      it('integer conflicts with number', function () {
+        const argv = parser.detailed(['--key', 'val'], {
+          integer: ['key'],
+          number: ['key']
+        })
+        argv.error.should.be.ok
+        argv.error.message.should.match(/opts\.integer excludes opts\.number/)
+      })
+
+      it('integer conflicts with count', function () {
+        const argv = parser.detailed(['--key', 'val'], {
+          integer: ['key'],
+          count: ['key']
+        })
+        argv.error.should.be.ok
+        argv.error.message.should.match(/opts\.integer excludes opts\.count/)
+      })
+
+      it('integer combines with array', function () {
+        const result = parser(['--key', '1', '2'], {
+          integer: ['key'],
+          array: ['key']
+        })
+        result.should.have.property('key').that.is.an('array').and.to.deep.equal([1, 2])
+      })
+
+      it('integer combines with narg', function () {
+        const result = parser(['--key', '1', '2'], {
+          integer: ['key'],
+          narg: { key: 2 }
+        })
+        result.should.have.property('key').that.is.an('array').and.to.deep.equal([1, 2])
+      })
+
+      it('integer combines with normalize', function () {
+        const result = parser(['--key', '42'], {
+          integer: ['key'],
+          normalize: ['key']
+        })
+        result.should.have.property('key', 42)
+      })
+    })
+
+    describe('existing number behavior unchanged', function () {
+      it('number still coerces decimal values', function () {
+        const result = parser(['--val', '3.14'], { number: ['val'] })
+        result.should.have.property('val', 3.14)
+      })
+
+      it('number still coerces negative values', function () {
+        const result = parser(['--val', '-5.5'], { number: ['val'] })
+        result.should.have.property('val', -5.5)
+      })
+
+      it('number does not error on non-numeric strings', function () {
+        const result = parser(['--val', 'abc'], { number: ['val'] })
+        Number.isNaN(result.val).should.equal(true)
+      })
+
+      it('integer does not affect number behavior', function () {
+        const result = parser(['--n', '3.14', '--i', '42'], {
+          number: ['n'],
+          integer: ['i']
+        })
+        result.should.have.property('n', 3.14)
+        result.should.have.property('i', 42)
+      })
+    })
+  })
+
   describe('greedy-arrays=false', () => {
     it('does not consume more than one argument after array option', () => {
       const argv = parser(['--arr', 'foo', 'bar'], {

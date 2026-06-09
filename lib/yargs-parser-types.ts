@@ -101,8 +101,8 @@ export interface Options {
   alias: Dictionary<string | string[]>;
   /**
    * Indicate that keys should be parsed as an array: `{ array: ['foo', 'bar'] }`.
-   * Indicate that keys should be parsed as an array and coerced to booleans / numbers:
-   * { array: [ { key: 'foo', boolean: true }, {key: 'bar', number: true} ] }`.
+   * Indicate that keys should be parsed as an array and coerced to booleans / numbers / integers:
+   * { array: [ { key: 'foo', boolean: true }, {key: 'bar', number: true}, {key: 'ids', integer: true} ] }`.
    */
   array: ArrayOption | ArrayOption[];
   /** Arguments should be parsed as booleans: `{ boolean: ['x', 'y'] }`. */
@@ -132,6 +132,8 @@ export interface Options {
   string: string | string[];
   /** Keys should be treated as numbers. */
   number: string | string[];
+  /** Keys should be treated as integers. */
+  integer: string | string[];
   /** i18n handler, defaults to util.format */
   __: (format: any, ...param: any[]) => string;
   /** alias lookup table defaults */
@@ -155,6 +157,7 @@ export interface Parser {
   camelCase(str: string): string;
   decamelize(str: string, joinString?: string): string;
   looksLikeNumber(x: null | undefined | number | string): boolean;
+  looksLikeInteger(x: null | undefined | number | string): boolean;
 }
 
 export type StringFlag = Dictionary<string[]>;
@@ -170,6 +173,7 @@ export interface Flags {
   bools: BooleanFlag;
   strings: BooleanFlag;
   numbers: BooleanFlag;
+  integers: BooleanFlag;
   counts: BooleanFlag;
   normalize: BooleanFlag;
   configs: ConfigsFlag;
@@ -184,12 +188,13 @@ export type FlagValue = ValueOf<Flag>;
 
 export type FlagsKey = KeyOf<Omit<Flags, 'keys'>>;
 
-export type ArrayFlagsKey = Extract<FlagsKey, 'bools' | 'strings' | 'numbers'>;
+export type ArrayFlagsKey = Extract<FlagsKey, 'bools' | 'strings' | 'numbers' | 'integers'>;
 
 export enum DefaultValuesForTypeKey {
   BOOLEAN = 'boolean',
   STRING = 'string',
   NUMBER = 'number',
+  INTEGER = 'integer',
   ARRAY = 'array',
 }
 
@@ -197,5 +202,6 @@ export interface DefaultValuesForType {
   [DefaultValuesForTypeKey.BOOLEAN]: boolean;
   [DefaultValuesForTypeKey.STRING]: string;
   [DefaultValuesForTypeKey.NUMBER]: undefined;
+  [DefaultValuesForTypeKey.INTEGER]: undefined;
   [DefaultValuesForTypeKey.ARRAY]: any[];
 }

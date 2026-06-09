@@ -11,7 +11,7 @@
 import { format } from 'util'
 import { normalize, resolve } from 'path'
 import { ArgsInput, Arguments, Parser, Options, DetailedArguments } from './yargs-parser-types.js'
-import { camelCase, decamelize, looksLikeNumber } from './string-utils.js'
+import { camelCase, decamelize, looksLikeNumber, looksLikeInteger } from './string-utils.js'
 import { YargsParser } from './yargs-parser.js'
 import { readFileSync } from 'fs'
 import { createRequire } from 'node:module';
@@ -62,6 +62,7 @@ yargsParser.detailed = function (args: ArgsInput, opts?: Partial<Options>): Deta
 yargsParser.camelCase = camelCase
 yargsParser.decamelize = decamelize
 yargsParser.looksLikeNumber = looksLikeNumber
+yargsParser.looksLikeInteger = looksLikeInteger
 export default yargsParser
 
 // special syntax to allow unqualified default export from CommonJS

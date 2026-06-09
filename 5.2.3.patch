@@ -1,0 +1,581 @@
+diff --git a/lib/index.ts b/lib/index.ts
+index 3269064..d126e70 100644
+--- a/lib/index.ts
++++ b/lib/index.ts
+@@ -11,7 +11,7 @@
+ import { format } from 'util'
+ import { normalize, resolve } from 'path'
+ import { ArgsInput, Arguments, Parser, Options, DetailedArguments } from './yargs-parser-types.js'
+-import { camelCase, decamelize, looksLikeNumber } from './string-utils.js'
++import { camelCase, decamelize, looksLikeNumber, looksLikeInteger } from './string-utils.js'
+ import { YargsParser } from './yargs-parser.js'
+ import { readFileSync } from 'fs'
+ import { createRequire } from 'node:module';
+@@ -62,6 +62,7 @@ yargsParser.detailed = function (args: ArgsInput, opts?: Partial<Options>): Deta
+ yargsParser.camelCase = camelCase
+ yargsParser.decamelize = decamelize
+ yargsParser.looksLikeNumber = looksLikeNumber
++yargsParser.looksLikeInteger = looksLikeInteger
+ export default yargsParser
+ 
+ // special syntax to allow unqualified default export from CommonJS
+diff --git a/lib/string-utils.ts b/lib/string-utils.ts
+index 5932a4c..9030c11 100644
+--- a/lib/string-utils.ts
++++ b/lib/string-utils.ts
+@@ -61,3 +61,13 @@ export function looksLikeNumber (x: null | undefined | number | string): boolean
+   if (/^0[^.]/.test(x)) return false
+   return /^[-]?(?:\d+(?:\.\d*)?|\.\d+)(e[-+]?\d+)?$/.test(x)
+ }
++
++export function looksLikeInteger (x: null | undefined | number | string): boolean {
++  if (x === null || x === undefined) return false
++  if (typeof x === 'number') return Number.isInteger(x) && Number.isSafeInteger(x)
++  const str = `${x}`.trim()
++  if (!looksLikeNumber(str)) return false
++  if (str.includes('.')) return false
++  const num = Number(str)
++  return Number.isInteger(num) && Number.isSafeInteger(num)
++}
+diff --git a/lib/yargs-parser-types.ts b/lib/yargs-parser-types.ts
+index 9e03ff2..0f61bc4 100644
+--- a/lib/yargs-parser-types.ts
++++ b/lib/yargs-parser-types.ts
+@@ -101,8 +101,8 @@ export interface Options {
+   alias: Dictionary<string | string[]>;
+   /**
+    * Indicate that keys should be parsed as an array: `{ array: ['foo', 'bar'] }`.
+-   * Indicate that keys should be parsed as an array and coerced to booleans / numbers:
+-   * { array: [ { key: 'foo', boolean: true }, {key: 'bar', number: true} ] }`.
++   * Indicate that keys should be parsed as an array and coerced to booleans / numbers / integers:
++   * { array: [ { key: 'foo', boolean: true }, {key: 'bar', number: true}, {key: 'ids', integer: true} ] }`.
+    */
+   array: ArrayOption | ArrayOption[];
+   /** Arguments should be parsed as booleans: `{ boolean: ['x', 'y'] }`. */
+@@ -132,6 +132,8 @@ export interface Options {
+   string: string | string[];
+   /** Keys should be treated as numbers. */
+   number: string | string[];
++  /** Keys should be treated as integers. */
++  integer: string | string[];
+   /** i18n handler, defaults to util.format */
+   __: (format: any, ...param: any[]) => string;
+   /** alias lookup table defaults */
+@@ -155,6 +157,7 @@ export interface Parser {
+   camelCase(str: string): string;
+   decamelize(str: string, joinString?: string): string;
+   looksLikeNumber(x: null | undefined | number | string): boolean;
++  looksLikeInteger(x: null | undefined | number | string): boolean;
+ }
+ 
+ export type StringFlag = Dictionary<string[]>;
+@@ -170,6 +173,7 @@ export interface Flags {
+   bools: BooleanFlag;
+   strings: BooleanFlag;
+   numbers: BooleanFlag;
++  integers: BooleanFlag;
+   counts: BooleanFlag;
+   normalize: BooleanFlag;
+   configs: ConfigsFlag;
+@@ -184,12 +188,13 @@ export type FlagValue = ValueOf<Flag>;
+ 
+ export type FlagsKey = KeyOf<Omit<Flags, 'keys'>>;
+ 
+-export type ArrayFlagsKey = Extract<FlagsKey, 'bools' | 'strings' | 'numbers'>;
++export type ArrayFlagsKey = Extract<FlagsKey, 'bools' | 'strings' | 'numbers' | 'integers'>;
+ 
+ export enum DefaultValuesForTypeKey {
+   BOOLEAN = 'boolean',
+   STRING = 'string',
+   NUMBER = 'number',
++  INTEGER = 'integer',
+   ARRAY = 'array',
+ }
+ 
+@@ -197,5 +202,6 @@ export interface DefaultValuesForType {
+   [DefaultValuesForTypeKey.BOOLEAN]: boolean;
+   [DefaultValuesForTypeKey.STRING]: string;
+   [DefaultValuesForTypeKey.NUMBER]: undefined;
++  [DefaultValuesForTypeKey.INTEGER]: undefined;
+   [DefaultValuesForTypeKey.ARRAY]: any[];
+ }
+diff --git a/lib/yargs-parser.ts b/lib/yargs-parser.ts
+index 48a2d0f..3c4318b 100644
+--- a/lib/yargs-parser.ts
++++ b/lib/yargs-parser.ts
+@@ -30,7 +30,7 @@ import type {
+   YargsParserMixin
+ } from './yargs-parser-types.js'
+ import { DefaultValuesForTypeKey } from './yargs-parser-types.js'
+-import { camelCase, decamelize, looksLikeNumber } from './string-utils.js'
++import { camelCase, decamelize, looksLikeNumber, looksLikeInteger } from './string-utils.js'
+ 
+ let mixin: YargsParserMixin
+ export class YargsParser {
+@@ -54,6 +54,7 @@ export class YargsParser {
+       normalize: undefined,
+       string: undefined,
+       number: undefined,
++      integer: undefined,
+       __: undefined,
+       key: undefined
+     }, options)
+@@ -101,6 +102,7 @@ export class YargsParser {
+       bools: Object.create(null),
+       strings: Object.create(null),
+       numbers: Object.create(null),
++      integers: Object.create(null),
+       counts: Object.create(null),
+       normalize: Object.create(null),
+       configs: Object.create(null),
+@@ -119,7 +121,8 @@ export class YargsParser {
+         const arrayFlagKeys: Record<string, ArrayFlagsKey> = {
+           boolean: 'bools',
+           string: 'strings',
+-          number: 'numbers'
++          number: 'numbers',
++          integer: 'integers'
+         }
+         return arrayFlagKeys[key]
+       }).filter(Boolean).pop()
+@@ -148,6 +151,11 @@ export class YargsParser {
+       flags.keys.push(key)
+     })
+ 
++    ;([] as string[]).concat(opts.integer || []).filter(Boolean).forEach(function (key) {
++      flags.integers[key] = true
++      flags.keys.push(key)
++    })
++
+     ;([] as string[]).concat(opts.count || []).filter(Boolean).forEach(function (key) {
+       flags.counts[key] = true
+       flags.keys.push(key)
+@@ -415,6 +423,7 @@ export class YargsParser {
+     setConfigObjects()
+     applyDefaultsAndAliases(argv, flags.aliases, defaults, true)
+     applyCoercions(argv)
++    validateIntegers(argv)
+     if (configuration['set-placeholder-key']) setPlaceholderKeys(argv)
+ 
+     // for any counts either not in args or without an explicit default, set to 0
+@@ -643,7 +652,7 @@ export class YargsParser {
+         const shouldCoerceNumber = looksLikeNumber(value) && configuration['parse-numbers'] && (
+           Number.isSafeInteger(Math.floor(parseFloat(`${value}`)))
+         )
+-        if (shouldCoerceNumber || (!isUndefined(value) && checkAllAliases(key, flags.numbers))) {
++        if (shouldCoerceNumber || (!isUndefined(value) && checkAllAliases(key, flags.numbers)) || (!isUndefined(value) && checkAllAliases(key, flags.integers))) {
+           value = Number(value)
+         }
+       }
+@@ -767,6 +776,33 @@ export class YargsParser {
+       })
+     }
+ 
++    function validateIntegers (argv: Arguments): void {
++      const validated: Set<string> = new Set()
++      Object.keys(flags.integers).forEach(function (key) {
++        if (validated.has(key)) return
++        const allKeys = ([] as string[]).concat(flags.aliases[key] || [], key)
++        allKeys.forEach(k => validated.add(k))
++        const value = argv[key]
++        if (value === undefined) return
++        const values = Array.isArray(value) ? value : [value]
++        for (let i = 0; i < values.length; i++) {
++          const v = values[i]
++          if (!looksLikeInteger(v)) {
++            error = Error(__('Invalid integer: %s=%s', key, v))
++            return
++          }
++        }
++        if (typeof value === 'string') {
++          allKeys.forEach(k => { argv[k] = Number(value) })
++        } else if (Array.isArray(value)) {
++          const coerced = value.map(function (v) {
++            return typeof v === 'string' ? Number(v) : v
++          })
++          allKeys.forEach(k => { argv[k] = coerced })
++        }
++      })
++    }
++
+     function setPlaceholderKeys (argv: Arguments): Arguments {
+       flags.keys.forEach((key) => {
+         // don't set placeholder keys for dot notation options 'foo.bar'.
+@@ -1002,6 +1038,7 @@ export class YargsParser {
+         [DefaultValuesForTypeKey.BOOLEAN]: true,
+         [DefaultValuesForTypeKey.STRING]: '',
+         [DefaultValuesForTypeKey.NUMBER]: undefined,
++        [DefaultValuesForTypeKey.INTEGER]: undefined,
+         [DefaultValuesForTypeKey.ARRAY]: []
+       }
+ 
+@@ -1013,6 +1050,7 @@ export class YargsParser {
+       let type: DefaultValuesForTypeKey = DefaultValuesForTypeKey.BOOLEAN
+       if (checkAllAliases(key, flags.strings)) type = DefaultValuesForTypeKey.STRING
+       else if (checkAllAliases(key, flags.numbers)) type = DefaultValuesForTypeKey.NUMBER
++      else if (checkAllAliases(key, flags.integers)) type = DefaultValuesForTypeKey.INTEGER
+       else if (checkAllAliases(key, flags.bools)) type = DefaultValuesForTypeKey.BOOLEAN
+       else if (checkAllAliases(key, flags.arrays)) type = DefaultValuesForTypeKey.ARRAY
+       return type
+@@ -1035,6 +1073,24 @@ export class YargsParser {
+         }
+         return false
+       })
++
++      // integer keys should not be set as string/boolean/number/count
++      Object.keys(flags.integers).find(key => {
++        if (checkAllAliases(key, flags.strings)) {
++          error = Error(__('Invalid configuration: %s, opts.integer excludes opts.string.', key))
++          return true
++        } else if (checkAllAliases(key, flags.bools)) {
++          error = Error(__('Invalid configuration: %s, opts.integer excludes opts.boolean.', key))
++          return true
++        } else if (checkAllAliases(key, flags.numbers)) {
++          error = Error(__('Invalid configuration: %s, opts.integer excludes opts.number.', key))
++          return true
++        } else if (checkAllAliases(key, flags.counts)) {
++          error = Error(__('Invalid configuration: %s, opts.integer excludes opts.count.', key))
++          return true
++        }
++        return false
++      })
+     }
+ 
+     return {
+diff --git a/test/typescript/types.ts b/test/typescript/types.ts
+index 4d04427..d227583 100644
+--- a/test/typescript/types.ts
++++ b/test/typescript/types.ts
+@@ -10,4 +10,32 @@ describe('types', () => {
+     })
+     assert.strictEqual(argv.foo, '99')
+   })
++
++  it('allows integer option as string', () => {
++    const argv = yargsParser(['--port', '3000'], {
++      integer: 'port'
++    })
++    assert.strictEqual(argv.port, 3000)
++  })
++
++  it('allows integer option as string[]', () => {
++    const argv = yargsParser(['--port', '3000', '--count', '42'], {
++      integer: ['port', 'count']
++    })
++    assert.strictEqual(argv.port, 3000)
++    assert.strictEqual(argv.count, 42)
++  })
++
++  it('allows array with integer true', () => {
++    const argv = yargsParser(['--ids', '1', '2'], {
++      array: [{ key: 'ids', integer: true }]
++    })
++    assert.deepStrictEqual(argv.ids, [1, 2])
++  })
++
++  it('allows looksLikeInteger on parser', () => {
++    assert.strictEqual(yargsParser.looksLikeInteger('42'), true)
++    assert.strictEqual(yargsParser.looksLikeInteger('3.14'), false)
++    assert.strictEqual(yargsParser.looksLikeInteger('0x10'), true)
++  })
+ })
+diff --git a/test/yargs-parser.mjs b/test/yargs-parser.mjs
+index 4c69237..e882be7 100644
+--- a/test/yargs-parser.mjs
++++ b/test/yargs-parser.mjs
+@@ -4076,6 +4076,295 @@ describe('yargs-parser', function () {
+     })
+   })
+ 
++  describe('integer', function () {
++    it('parses plain integer values', function () {
++      const result = parser(['--port', '3000'], { integer: ['port'] })
++      result.should.have.property('port', 3000)
++    })
++
++    it('parses hex integer values', function () {
++      const result = parser(['--port', '0x10'], { integer: ['port'] })
++      result.should.have.property('port', 16)
++    })
++
++    it('parses scientific notation that resolves to an integer', function () {
++      const result = parser(['--port=1e3'], { integer: ['port'] })
++      result.should.have.property('port', 1000)
++    })
++
++    it('rejects decimal values via detailed error', function () {
++      const argv = parser.detailed(['--port', '3.14'], { integer: ['port'] })
++      argv.error.should.be.ok
++      argv.error.message.should.match(/Invalid integer/)
++      argv.error.message.should.match(/port/)
++      argv.error.message.should.match(/3\.14/)
++    })
++
++    it('rejects scientific notation with decimal via detailed error', function () {
++      const argv = parser.detailed(['--port', '1.5e2'], { integer: ['port'] })
++      argv.error.should.be.ok
++      argv.error.message.should.match(/Invalid integer/)
++      argv.error.message.should.match(/port/)
++    })
++
++    it('rejects non-numeric strings via detailed error', function () {
++      const argv = parser.detailed(['--port', 'abc'], { integer: ['port'] })
++      argv.error.should.be.ok
++      argv.error.message.should.match(/Invalid integer/)
++      argv.error.message.should.match(/port/)
++    })
++
++    it('rejects incomplete scientific notation via detailed error', function () {
++      const argv = parser.detailed(['--port', '1e'], { integer: ['port'] })
++      argv.error.should.be.ok
++      argv.error.message.should.match(/Invalid integer/)
++    })
++
++    it('rejects values beyond Number.MAX_SAFE_INTEGER via detailed error', function () {
++      const argv = parser.detailed(['--big', String(Number.MAX_SAFE_INTEGER + 1)], { integer: ['big'] })
++      argv.error.should.be.ok
++      argv.error.message.should.match(/Invalid integer/)
++    })
++
++    it('accepts Number.MAX_SAFE_INTEGER as valid', function () {
++      const result = parser(['--big', String(Number.MAX_SAFE_INTEGER)], { integer: ['big'] })
++      result.should.have.property('big', Number.MAX_SAFE_INTEGER)
++    })
++
++    it('rejects leading-zero octal-like numbers via detailed error', function () {
++      const argv = parser.detailed(['--port', '0100'], { integer: ['port'] })
++      argv.error.should.be.ok
++      argv.error.message.should.match(/Invalid integer/)
++    })
++
++    it('rejects leading-zero decimal-like numbers via detailed error', function () {
++      const argv = parser.detailed(['--port', '00.1'], { integer: ['port'] })
++      argv.error.should.be.ok
++      argv.error.message.should.match(/Invalid integer/)
++    })
++
++    it('accepts negative integers', function () {
++      const result = parser(['--val', '-42'], { integer: ['val'] })
++      result.should.have.property('val', -42)
++    })
++
++    it('accepts zero', function () {
++      const result = parser(['--val', '0'], { integer: ['val'] })
++      result.should.have.property('val', 0)
++    })
++
++    describe('array integer', function () {
++      it('parses array of integers via array object syntax', function () {
++        const result = parser(['--ids', '1', '2'], {
++          array: [{ key: 'ids', integer: true }]
++        })
++        result.should.have.property('ids').that.is.an('array').and.to.deep.equal([1, 2])
++      })
++
++      it('handles empty array for integer type', function () {
++        const result = parser(['--ids', '-a'], {
++          array: [{ key: 'ids', integer: true }]
++        })
++        result.should.have.property('ids').that.is.an('array').and.to.deep.equal([])
++      })
++
++      it('handles single element array for integer type', function () {
++        const result = parser(['--ids', '42'], {
++          array: [{ key: 'ids', integer: true }]
++        })
++        result.should.have.property('ids').that.is.an('array').and.to.deep.equal([42])
++      })
++    })
++
++    describe('alias', function () {
++      it('applies integer coercion through alias', function () {
++        const result = parser(['-p', '3000'], {
++          integer: ['port'],
++          alias: { port: ['p'] }
++        })
++        result.should.have.property('p', 3000)
++        result.should.have.property('port', 3000)
++      })
++
++      it('applies integer validation through alias', function () {
++        const argv = parser.detailed(['--p', 'abc'], {
++          integer: ['port'],
++          alias: { port: ['p'] }
++        })
++        argv.error.should.be.ok
++        argv.error.message.should.match(/Invalid integer/)
++      })
++    })
++
++    describe('default', function () {
++      it('respects integer default value', function () {
++        const result = parser([], {
++          integer: ['port'],
++          default: { port: 8080 }
++        })
++        result.should.have.property('port', 8080)
++      })
++
++      it('CLI integer value overrides default', function () {
++        const result = parser(['--port', '3000'], {
++          integer: ['port'],
++          default: { port: 8080 }
++        })
++        result.should.have.property('port', 3000)
++      })
++
++      it('reports error when default is not a valid integer', function () {
++        const argv = parser.detailed([], {
++          integer: ['port'],
++          default: { port: 3.14 }
++        })
++        argv.error.should.be.ok
++        argv.error.message.should.match(/Invalid integer/)
++      })
++    })
++
++    describe('configObjects', function () {
++      it('respects integer from configObjects', function () {
++        const result = parser([], {
++          integer: ['port'],
++          configObjects: [{ port: 3000 }]
++        })
++        result.should.have.property('port', 3000)
++      })
++
++      it('invalid integer in configObjects sets error', function () {
++        const argv = parser.detailed([], {
++          integer: ['port'],
++          configObjects: [{ port: 'abc' }]
++        })
++        argv.error.should.be.ok
++        argv.error.message.should.match(/Invalid integer/)
++      })
++    })
++
++    describe('coerce', function () {
++      it('runs coerce before integer validation', function () {
++        const result = parser(['--port', '3000'], {
++          integer: ['port'],
++          coerce: {
++            port: function (val) { return Number(val) + 1 }
++          }
++        })
++        result.should.have.property('port', 3001)
++      })
++
++      it('coerce returning non-integer sets error', function () {
++        const argv = parser.detailed(['--port', '3000'], {
++          integer: ['port'],
++          coerce: {
++            port: function () { return 'not-an-integer' }
++          }
++        })
++        argv.error.should.be.ok
++        argv.error.message.should.match(/Invalid integer/)
++      })
++
++      it('coerce returning decimal sets error', function () {
++        const argv = parser.detailed(['--port', '3000'], {
++          integer: ['port'],
++          coerce: {
++            port: function () { return 3.14 }
++          }
++        })
++        argv.error.should.be.ok
++        argv.error.message.should.match(/Invalid integer/)
++      })
++    })
++
++    describe('configuration conflicts', function () {
++      it('integer conflicts with string', function () {
++        const argv = parser.detailed(['--key', 'val'], {
++          integer: ['key'],
++          string: ['key']
++        })
++        argv.error.should.be.ok
++        argv.error.message.should.match(/opts\.integer excludes opts\.string/)
++      })
++
++      it('integer conflicts with boolean', function () {
++        const argv = parser.detailed(['--key', 'val'], {
++          integer: ['key'],
++          boolean: ['key']
++        })
++        argv.error.should.be.ok
++        argv.error.message.should.match(/opts\.integer excludes opts\.boolean/)
++      })
++
++      it('integer conflicts with number', function () {
++        const argv = parser.detailed(['--key', 'val'], {
++          integer: ['key'],
++          number: ['key']
++        })
++        argv.error.should.be.ok
++        argv.error.message.should.match(/opts\.integer excludes opts\.number/)
++      })
++
++      it('integer conflicts with count', function () {
++        const argv = parser.detailed(['--key', 'val'], {
++          integer: ['key'],
++          count: ['key']
++        })
++        argv.error.should.be.ok
++        argv.error.message.should.match(/opts\.integer excludes opts\.count/)
++      })
++
++      it('integer combines with array', function () {
++        const result = parser(['--key', '1', '2'], {
++          integer: ['key'],
++          array: ['key']
++        })
++        result.should.have.property('key').that.is.an('array').and.to.deep.equal([1, 2])
++      })
++
++      it('integer combines with narg', function () {
++        const result = parser(['--key', '1', '2'], {
++          integer: ['key'],
++          narg: { key: 2 }
++        })
++        result.should.have.property('key').that.is.an('array').and.to.deep.equal([1, 2])
++      })
++
++      it('integer combines with normalize', function () {
++        const result = parser(['--key', '42'], {
++          integer: ['key'],
++          normalize: ['key']
++        })
++        result.should.have.property('key', 42)
++      })
++    })
++
++    describe('existing number behavior unchanged', function () {
++      it('number still coerces decimal values', function () {
++        const result = parser(['--val', '3.14'], { number: ['val'] })
++        result.should.have.property('val', 3.14)
++      })
++
++      it('number still coerces negative values', function () {
++        const result = parser(['--val', '-5.5'], { number: ['val'] })
++        result.should.have.property('val', -5.5)
++      })
++
++      it('number does not error on non-numeric strings', function () {
++        const result = parser(['--val', 'abc'], { number: ['val'] })
++        Number.isNaN(result.val).should.equal(true)
++      })
++
++      it('integer does not affect number behavior', function () {
++        const result = parser(['--n', '3.14', '--i', '42'], {
++          number: ['n'],
++          integer: ['i']
++        })
++        result.should.have.property('n', 3.14)
++        result.should.have.property('i', 42)
++      })
++    })
++  })
++
+   describe('greedy-arrays=false', () => {
+     it('does not consume more than one argument after array option', () => {
+       const argv = parser(['--arr', 'foo', 'bar'], {
