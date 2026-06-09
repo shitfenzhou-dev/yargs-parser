@@ -409,11 +409,23 @@ export class YargsParser {
     // 3. value from config file
     // 4. value from config objects
     // 5. configured default value
-    applyEnvVars(argv, true) // special case: check env vars that point to config file
-    applyEnvVars(argv, false)
-    setConfig(argv)
-    setConfigObjects()
-    applyDefaultsAndAliases(argv, flags.aliases, defaults, true)
+    applyExtraneousSources(
+      argv,
+      flags,
+      defaults,
+      configuration,
+      configObjects,
+      envPrefix,
+      mixin,
+      __,
+      hasKey,
+      setKey,
+      setArg,
+      checkAllAliases,
+      defaulted,
+      (err: Error) => { error = err }
+    )
+
     applyCoercions(argv)
     if (configuration['set-placeholder-key']) setPlaceholderKeys(argv)
 
@@ -650,101 +662,7 @@ export class YargsParser {
       return value
     }
 
-    // set args from config.json file, this should be
-    // applied last so that defaults can be applied.
-    function setConfig (argv: Arguments): void {
-      const configLookup = Object.create(null)
 
-      // expand defaults/aliases, in-case any happen to reference
-      // the config.json file.
-      applyDefaultsAndAliases(configLookup, flags.aliases, defaults)
-
-      Object.keys(flags.configs).forEach(function (configKey) {
-        const configPath = argv[configKey] || configLookup[configKey]
-        if (configPath) {
-          try {
-            let config = null
-            const resolvedConfigPath = mixin.resolve(mixin.cwd(), configPath)
-            const resolveConfig = flags.configs[configKey]
-
-            if (typeof resolveConfig === 'function') {
-              try {
-                config = resolveConfig(resolvedConfigPath)
-              } catch (e) {
-                config = e
-              }
-              if (config instanceof Error) {
-                error = config
-                return
-              }
-            } else {
-              config = mixin.require(resolvedConfigPath)
-            }
-
-            setConfigObject(config)
-          } catch (ex: any) {
-            // Deno will receive a PermissionDenied error if an attempt is
-            // made to load config without the --allow-read flag:
-            if (ex.name === 'PermissionDenied') error = ex
-            else if (argv[configKey]) error = Error(__('Invalid JSON config file: %s', configPath))
-          }
-        }
-      })
-    }
-
-    // set args from config object.
-    // it recursively checks nested objects.
-    function setConfigObject (config: { [key: string]: any }, prev?: string): void {
-      Object.keys(config).forEach(function (key) {
-        const value = config[key]
-        const fullKey = prev ? prev + '.' + key : key
-
-        // if the value is an inner object and we have dot-notation
-        // enabled, treat inner objects in config the same as
-        // heavily nested dot notations (foo.bar.apple).
-        if (typeof value === 'object' && value !== null && !Array.isArray(value) && configuration['dot-notation']) {
-          // if the value is an object but not an array, check nested object
-          setConfigObject(value, fullKey)
-        } else {
-          // setting arguments via CLI takes precedence over
-          // values within the config file.
-          if (!hasKey(argv, fullKey.split('.')) || (checkAllAliases(fullKey, flags.arrays) && configuration['combine-arrays'])) {
-            setArg(fullKey, value)
-          }
-        }
-      })
-    }
-
-    // set all config objects passed in opts
-    function setConfigObjects (): void {
-      if (typeof configObjects !== 'undefined') {
-        configObjects.forEach(function (configObject) {
-          setConfigObject(configObject)
-        })
-      }
-    }
-
-    function applyEnvVars (argv: Arguments, configOnly: boolean): void {
-      if (typeof envPrefix === 'undefined') return
-
-      const prefix = typeof envPrefix === 'string' ? envPrefix : ''
-      const env = mixin.env()
-      Object.keys(env).forEach(function (envVar) {
-        if (prefix === '' || envVar.lastIndexOf(prefix, 0) === 0) {
-          // get array of nested keys and convert them to camel case
-          const keys = envVar.split('__').map(function (key, i) {
-            if (i === 0) {
-              key = key.substring(prefix.length)
-            }
-            return camelCase(key)
-          })
-
-          if (((configOnly && flags.configs[keys.join('.')]) || !configOnly) && !hasKey(argv, keys)) {
-            setArg(keys.join('.'), env[envVar])
-          }
-        }
-      })
-    }
 
     function applyCoercions (argv: Arguments): void {
       let coerce: false | CoerceCallback
@@ -776,19 +694,7 @@ export class YargsParser {
       return argv
     }
 
-    function applyDefaultsAndAliases (obj: { [key: string]: any }, aliases: { [key: string]: string[] }, defaults: { [key: string]: any }, canLog: boolean = false): void {
-      Object.keys(defaults).forEach(function (key) {
-        if (!hasKey(obj, key.split('.'))) {
-          setKey(obj, key.split('.'), defaults[key])
-          if (canLog) defaulted[key] = true
 
-          ;(aliases[key] || []).forEach(function (x) {
-            if (hasKey(obj, x.split('.'))) return
-            setKey(obj, x.split('.'), defaults[key])
-          })
-        }
-      })
-    }
 
     function hasKey (obj: { [key: string]: any }, keys: string[]): boolean {
       let o = obj
@@ -1120,4 +1026,161 @@ function stripQuotes (val: string): string {
   )
     ? val.substring(1, val.length - 1)
     : val
+}
+
+function applyExtraneousSources(
+  argv: Arguments,
+  flags: Flags,
+  defaults: OptionsDefault,
+  configuration: Configuration,
+  configObjects: Dictionary<any>[],
+  envPrefix: string | undefined,
+  mixin: YargsParserMixin,
+  __: Function,
+  hasKey: (obj: { [key: string]: any }, keys: string[]) => boolean,
+  setKey: (obj: { [key: string]: any }, keys: string[], value: any) => void,
+  setArg: (key: string, val: any) => void,
+  checkAllAliases: (key: string, flagKey: Dictionary<any>) => any,
+  defaulted: Dictionary<boolean>,
+  setError: (err: Error) => void
+): void {
+  applyEnvVars(argv, true, envPrefix, mixin, flags, hasKey, setArg)
+  applyEnvVars(argv, false, envPrefix, mixin, flags, hasKey, setArg)
+  
+  const configError = applyConfigSources(argv, flags, defaults, configuration, configObjects, mixin, __, hasKey, setKey, setArg, checkAllAliases)
+  if (configError) setError(configError)
+
+  applyDefaultSources(argv, defaults, flags.aliases, hasKey, setKey, true, defaulted)
+}
+
+function applyEnvVars(
+  argv: Arguments,
+  configOnly: boolean,
+  envPrefix: string | undefined,
+  mixin: YargsParserMixin,
+  flags: Flags,
+  hasKey: (obj: { [key: string]: any }, keys: string[]) => boolean,
+  setArg: (key: string, val: any) => void
+): void {
+  if (typeof envPrefix === 'undefined') return
+
+  const prefix = typeof envPrefix === 'string' ? envPrefix : ''
+  const env = mixin.env()
+  Object.keys(env).forEach(function (envVar) {
+    if (prefix === '' || envVar.lastIndexOf(prefix, 0) === 0) {
+      // get array of nested keys and convert them to camel case
+      const keys = envVar.split('__').map(function (key, i) {
+        if (i === 0) {
+          key = key.substring(prefix.length)
+        }
+        return camelCase(key)
+      })
+
+      if (((configOnly && flags.configs[keys.join('.')]) || !configOnly) && !hasKey(argv, keys)) {
+        setArg(keys.join('.'), env[envVar])
+      }
+    }
+  })
+}
+
+function applyConfigSources(
+  argv: Arguments,
+  flags: Flags,
+  defaults: OptionsDefault,
+  configuration: Configuration,
+  configObjects: Dictionary<any>[],
+  mixin: YargsParserMixin,
+  __: Function,
+  hasKey: (obj: { [key: string]: any }, keys: string[]) => boolean,
+  setKey: (obj: { [key: string]: any }, keys: string[], value: any) => void,
+  setArg: (key: string, val: any) => void,
+  checkAllAliases: (key: string, flagKey: Dictionary<any>) => any
+): Error | null {
+  let error: Error | null = null
+
+  function setConfigObject (config: { [key: string]: any }, prev?: string): void {
+    Object.keys(config).forEach(function (key) {
+      const value = config[key]
+      const fullKey = prev ? prev + '.' + key : key
+
+      // if the value is an inner object and we have dot-notation
+      // enabled, treat inner objects in config the same as
+      // heavily nested dot notations (foo.bar.apple).
+      if (typeof value === 'object' && value !== null && !Array.isArray(value) && configuration['dot-notation']) {
+        // if the value is an object but not an array, check nested object
+        setConfigObject(value, fullKey)
+      } else {
+        // setting arguments via CLI takes precedence over
+        // values within the config file.
+        if (!hasKey(argv, fullKey.split('.')) || (checkAllAliases(fullKey, flags.arrays) && configuration['combine-arrays'])) {
+          setArg(fullKey, value)
+        }
+      }
+    })
+  }
+
+  const configLookup = Object.create(null)
+  applyDefaultSources(configLookup, defaults, flags.aliases, hasKey, setKey, false)
+
+  Object.keys(flags.configs).forEach(function (configKey) {
+    const configPath = argv[configKey] || configLookup[configKey]
+    if (configPath) {
+      try {
+        let config = null
+        const resolvedConfigPath = mixin.resolve(mixin.cwd(), configPath)
+        const resolveConfig = flags.configs[configKey]
+
+        if (typeof resolveConfig === 'function') {
+          try {
+            config = resolveConfig(resolvedConfigPath)
+          } catch (e) {
+            config = e
+          }
+          if (config instanceof Error) {
+            error = config
+            return
+          }
+        } else {
+          config = mixin.require(resolvedConfigPath)
+        }
+
+        setConfigObject(config)
+      } catch (ex: any) {
+        // Deno will receive a PermissionDenied error if an attempt is
+        // made to load config without the --allow-read flag:
+        if (ex.name === 'PermissionDenied') error = ex
+        else if (argv[configKey]) error = Error(__('Invalid JSON config file: %s', configPath))
+      }
+    }
+  })
+
+  if (typeof configObjects !== 'undefined') {
+    configObjects.forEach(function (configObject) {
+      setConfigObject(configObject)
+    })
+  }
+
+  return error
+}
+
+function applyDefaultSources(
+  obj: { [key: string]: any },
+  defaults: OptionsDefault,
+  aliases: Dictionary<string[]>,
+  hasKey: (obj: { [key: string]: any }, keys: string[]) => boolean,
+  setKey: (obj: { [key: string]: any }, keys: string[], value: any) => void,
+  canLog: boolean = false,
+  defaulted?: Dictionary<boolean>
+): void {
+  Object.keys(defaults).forEach(function (key) {
+    if (!hasKey(obj, key.split('.'))) {
+      setKey(obj, key.split('.'), defaults[key])
+      if (canLog && defaulted) defaulted[key] = true
+
+      ;(aliases[key] || []).forEach(function (x) {
+        if (hasKey(obj, x.split('.'))) return
+        setKey(obj, x.split('.'), defaults[key])
+      })
+    }
+  })
 }

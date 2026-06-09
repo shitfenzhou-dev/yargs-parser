@@ -4174,4 +4174,116 @@ describe('yargs-parser', function () {
       parsed[arg].should.equal(35)
     })
   })
+
+  describe('refactored source application flow', () => {
+    it('applies sources in correct priority: CLI > envPrefix > config > configObjects > default', () => {
+      process.env.FOO_PRIORITY = 'env'
+      process.env.FOO_ONLY_ENV = 'env_only'
+
+      const parsed = parser(['--priority', 'cli', '--cli-only', 'cli_only'], {
+        envPrefix: 'FOO',
+        config: 'configPath',
+        configObjects: [{ priority: 'configObject', configObjOnly: 'configObj_only' }],
+        default: { priority: 'default', defaultOnly: 'default_only' },
+        alias: { p: 'priority' }
+      })
+      delete process.env.FOO_PRIORITY
+      delete process.env.FOO_ONLY_ENV
+
+      // CLI > env
+      parsed.priority.should.equal('cli')
+      parsed.p.should.equal('cli')
+      // CLI
+      parsed.cliOnly.should.equal('cli_only')
+      // Env
+      parsed.onlyEnv.should.equal('env_only')
+      // ConfigObject
+      parsed.configObjOnly.should.equal('configObj_only')
+      // Default
+      parsed.defaultOnly.should.equal('default_only')
+    })
+
+    it('allows env to provide config path and applies env for config first', () => {
+      const configPath = path.join(__dirname, 'fixtures', 'config.json')
+      process.env.TEST_CONFIG_PATH = configPath
+      process.env.TEST_FOO = 'env_foo'
+
+      const parsed = parser([], {
+        envPrefix: 'TEST',
+        config: 'config-path',
+        alias: { c: 'config-path' }
+      })
+      delete process.env.TEST_CONFIG_PATH
+      delete process.env.TEST_FOO
+
+      // config is loaded from the path provided by env
+      parsed.herp.should.equal('derp') // from config.json
+      // env > config
+      parsed.foo.should.equal('env_foo') // from env instead of config.json or other
+    })
+
+    it('returns error when config callback throws', () => {
+      const parsed = parser.detailed(['--conf', 'dummy'], {
+        config: {
+          conf: () => { throw new Error('config error') }
+        }
+      })
+      expect(parsed.error).to.be.an('error')
+      expect(parsed.error.message).to.equal('config error')
+    })
+
+    it('synchronizes aliases when applying config and default', () => {
+      const parsed = parser([], {
+        configObjects: [{
+          'long-name': 'config_val'
+        }],
+        default: {
+          'other-long': 'default_val'
+        },
+        alias: {
+          l: 'long-name',
+          o: 'other-long'
+        }
+      })
+      
+      parsed.l.should.equal('config_val')
+      parsed.longName.should.equal('config_val')
+      parsed['long-name'].should.equal('config_val')
+
+      parsed.o.should.equal('default_val')
+      parsed.otherLong.should.equal('default_val')
+      parsed['other-long'].should.equal('default_val')
+    })
+
+    it('applies nested dot-notation configObjects properly', () => {
+      const parsed = parser([], {
+        configObjects: [{
+          nested: {
+            foo: 'bar'
+          }
+        }]
+      })
+      parsed.nested.foo.should.equal('bar')
+    })
+
+    it('respects combine-arrays for configObjects', () => {
+      const parsed = parser(['--arr', 'cli_val'], {
+        array: ['arr'],
+        configObjects: [{ arr: ['config_val'] }],
+        configuration: {
+          'combine-arrays': true
+        }
+      })
+      parsed.arr.should.deep.equal(['config_val', 'cli_val'])
+    })
+
+    it('respects normalize for arrays from config', () => {
+      const parsed = parser([], {
+        array: ['arr'],
+        normalize: ['arr'],
+        configObjects: [{ arr: ['/foo/../bar', '/bin/../baz'] }]
+      })
+      parsed.arr.should.deep.equal([path.normalize('/bar'), path.normalize('/baz')])
+    })
+  })
 })
