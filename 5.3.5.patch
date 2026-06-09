@@ -1,0 +1,119 @@
+diff --git a/lib/tokenize-arg-string.ts b/lib/tokenize-arg-string.ts
+index 3d63e87..5f62fde 100644
+--- a/lib/tokenize-arg-string.ts
++++ b/lib/tokenize-arg-string.ts
+@@ -22,6 +22,21 @@ export function tokenizeArgString (argString: string | any[]): string[] {
+     prevC = c
+     c = argString.charAt(ii)
+ 
++    // Handle backslash escape sequences.
++    if (c === '\\' && ii + 1 < argString.length) {
++      const nextC = argString.charAt(ii + 1)
++      // Escaped backslash, escaped quotes (inside or outside quotes),
++      // and escaped whitespace (outside quotes only).
++      if (nextC === '\\' || nextC === "'" || nextC === '"' || (!opening && nextC === ' ')) {
++        ii++
++        c = argString.charAt(ii)
++        if (!args[i]) args[i] = ''
++        args[i] += c
++        prevC = c
++        continue
++      }
++    }
++
+     // split on spaces unless we're in quotes.
+     if (c === ' ' && !opening) {
+       if (!(prevC === ' ')) {
+diff --git a/test/typescript/tokenize-arg-string.ts b/test/typescript/tokenize-arg-string.ts
+index dc77c3e..cbb8484 100644
+--- a/test/typescript/tokenize-arg-string.ts
++++ b/test/typescript/tokenize-arg-string.ts
+@@ -129,4 +129,52 @@ describe('TokenizeArgString', function () {
+     strictEqual(args[0], '--foo')
+     strictEqual(args[1], '-bar')
+   })
++
++  it('handles escaped double quote inside double quotes', function () {
++    const args = tokenizeArgString('--msg "hello \\"world\\""')
++    strictEqual(args[0], '--msg')
++    strictEqual(args[1], '"hello "world""')
++  })
++
++  it('handles escaped single quote inside single quotes', function () {
++    const args = tokenizeArgString("--msg 'it\\'s ok'")
++    strictEqual(args[0], '--msg')
++    strictEqual(args[1], "'it's ok'")
++  })
++
++  it('handles escaped backslash', function () {
++    const args = tokenizeArgString('--path c:\\\\foo')
++    strictEqual(args[0], '--path')
++    strictEqual(args[1], 'c:\\foo')
++  })
++
++  it('handles escaped whitespace outside quotes', function () {
++    const args = tokenizeArgString('--name hello\\ world')
++    strictEqual(args[0], '--name')
++    strictEqual(args[1], 'hello world')
++  })
++
++  it('handles multiple escaped whitespaces outside quotes', function () {
++    const args = tokenizeArgString('--name hello\\ \\ world')
++    strictEqual(args[0], '--name')
++    strictEqual(args[1], 'hello  world')
++  })
++
++  it('handles escaped quote outside quotes', function () {
++    const args = tokenizeArgString('--msg say\\"hello')
++    strictEqual(args[0], '--msg')
++    strictEqual(args[1], 'say"hello')
++  })
++
++  it('handles escaped backslash inside double quotes', function () {
++    const args = tokenizeArgString('--path "c:\\\\foo"')
++    strictEqual(args[0], '--path')
++    strictEqual(args[1], '"c:\\foo"')
++  })
++
++  it('array input is not affected by escape handling', function () {
++    const args = tokenizeArgString(['--msg', '"hello \\"world\\""'])
++    strictEqual(args[0], '--msg')
++    strictEqual(args[1], '"hello \\"world\\""')
++  })
+ })
+diff --git a/test/yargs-parser.mjs b/test/yargs-parser.mjs
+index 4c69237..d2cd8f3 100644
+--- a/test/yargs-parser.mjs
++++ b/test/yargs-parser.mjs
+@@ -4174,4 +4174,31 @@ describe('yargs-parser', function () {
+       parsed[arg].should.equal(35)
+     })
+   })
++
++  describe('escape handling', function () {
++    it('should parse escaped double quote inside double quotes', function () {
++      const argv = parser('--msg "hello \\"world\\""')
++      argv.should.have.property('msg', 'hello "world"')
++    })
++
++    it('should parse escaped single quote inside single quotes', function () {
++      const argv = parser("--msg 'it\\'s ok'")
++      argv.should.have.property('msg', "it's ok")
++    })
++
++    it('should parse escaped whitespace outside quotes', function () {
++      const argv = parser('--name hello\\ world')
++      argv.should.have.property('name', 'hello world')
++    })
++
++    it('should parse escaped backslash', function () {
++      const argv = parser('--path c:\\\\foo')
++      argv.should.have.property('path', 'c:\\foo')
++    })
++
++    it('should not affect array input with escaped characters', function () {
++      const argv = parser(['--msg', '"hello \\"world\\""'])
++      argv.should.have.property('msg', 'hello "world"')
++    })
++  })
+ })

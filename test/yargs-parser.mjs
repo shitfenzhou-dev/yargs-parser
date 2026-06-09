@@ -4174,4 +4174,31 @@ describe('yargs-parser', function () {
       parsed[arg].should.equal(35)
     })
   })
+
+  describe('escape handling', function () {
+    it('should parse escaped double quote inside double quotes', function () {
+      const argv = parser('--msg "hello \\"world\\""')
+      argv.should.have.property('msg', 'hello "world"')
+    })
+
+    it('should parse escaped single quote inside single quotes', function () {
+      const argv = parser("--msg 'it\\'s ok'")
+      argv.should.have.property('msg', "it's ok")
+    })
+
+    it('should parse escaped whitespace outside quotes', function () {
+      const argv = parser('--name hello\\ world')
+      argv.should.have.property('name', 'hello world')
+    })
+
+    it('should parse escaped backslash', function () {
+      const argv = parser('--path c:\\\\foo')
+      argv.should.have.property('path', 'c:\\foo')
+    })
+
+    it('should not affect array input with escaped characters', function () {
+      const argv = parser(['--msg', '"hello \\"world\\""'])
+      argv.should.have.property('msg', 'hello "world"')
+    })
+  })
 })

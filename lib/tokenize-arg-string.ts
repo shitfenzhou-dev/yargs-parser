@@ -22,6 +22,21 @@ export function tokenizeArgString (argString: string | any[]): string[] {
     prevC = c
     c = argString.charAt(ii)
 
+    // Handle backslash escape sequences.
+    if (c === '\\' && ii + 1 < argString.length) {
+      const nextC = argString.charAt(ii + 1)
+      // Escaped backslash, escaped quotes (inside or outside quotes),
+      // and escaped whitespace (outside quotes only).
+      if (nextC === '\\' || nextC === "'" || nextC === '"' || (!opening && nextC === ' ')) {
+        ii++
+        c = argString.charAt(ii)
+        if (!args[i]) args[i] = ''
+        args[i] += c
+        prevC = c
+        continue
+      }
+    }
+
     // split on spaces unless we're in quotes.
     if (c === ' ' && !opening) {
       if (!(prevC === ' ')) {

@@ -129,4 +129,52 @@ describe('TokenizeArgString', function () {
     strictEqual(args[0], '--foo')
     strictEqual(args[1], '-bar')
   })
+
+  it('handles escaped double quote inside double quotes', function () {
+    const args = tokenizeArgString('--msg "hello \\"world\\""')
+    strictEqual(args[0], '--msg')
+    strictEqual(args[1], '"hello "world""')
+  })
+
+  it('handles escaped single quote inside single quotes', function () {
+    const args = tokenizeArgString("--msg 'it\\'s ok'")
+    strictEqual(args[0], '--msg')
+    strictEqual(args[1], "'it's ok'")
+  })
+
+  it('handles escaped backslash', function () {
+    const args = tokenizeArgString('--path c:\\\\foo')
+    strictEqual(args[0], '--path')
+    strictEqual(args[1], 'c:\\foo')
+  })
+
+  it('handles escaped whitespace outside quotes', function () {
+    const args = tokenizeArgString('--name hello\\ world')
+    strictEqual(args[0], '--name')
+    strictEqual(args[1], 'hello world')
+  })
+
+  it('handles multiple escaped whitespaces outside quotes', function () {
+    const args = tokenizeArgString('--name hello\\ \\ world')
+    strictEqual(args[0], '--name')
+    strictEqual(args[1], 'hello  world')
+  })
+
+  it('handles escaped quote outside quotes', function () {
+    const args = tokenizeArgString('--msg say\\"hello')
+    strictEqual(args[0], '--msg')
+    strictEqual(args[1], 'say"hello')
+  })
+
+  it('handles escaped backslash inside double quotes', function () {
+    const args = tokenizeArgString('--path "c:\\\\foo"')
+    strictEqual(args[0], '--path')
+    strictEqual(args[1], '"c:\\foo"')
+  })
+
+  it('array input is not affected by escape handling', function () {
+    const args = tokenizeArgString(['--msg', '"hello \\"world\\""'])
+    strictEqual(args[0], '--msg')
+    strictEqual(args[1], '"hello \\"world\\""')
+  })
 })
