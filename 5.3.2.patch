@@ -1,0 +1,133 @@
+diff --git a/lib/tokenize-arg-string.ts b/lib/tokenize-arg-string.ts
+index 3d63e87..3edb0cf 100644
+--- a/lib/tokenize-arg-string.ts
++++ b/lib/tokenize-arg-string.ts
+@@ -22,6 +22,21 @@ export function tokenizeArgString (argString: string | any[]): string[] {
+     prevC = c
+     c = argString.charAt(ii)
+ 
++    if (c === '\\') {
++      const nextC = argString.charAt(ii + 1)
++      if (
++        nextC === "'" ||
++        nextC === '"' ||
++        nextC === '\\' ||
++        (nextC === ' ' && !opening)
++      ) {
++        if (!args[i]) args[i] = ''
++        args[i] += nextC
++        ii++
++        continue
++      }
++    }
++
+     // split on spaces unless we're in quotes.
+     if (c === ' ' && !opening) {
+       if (!(prevC === ' ')) {
+diff --git a/test-parser.mjs b/test-parser.mjs
+new file mode 100644
+index 0000000..5d72500
+--- /dev/null
++++ b/test-parser.mjs
+@@ -0,0 +1,5 @@
++import yargsParser from './build/lib/index.js';
++console.log(yargsParser('--msg "hello \\"world\\""'));
++console.log(yargsParser("--msg 'it\\'s ok'"));
++console.log(yargsParser("--name hello\\ world"));
++console.log(yargsParser(["--msg", "\"hello \\\"world\\\"\""]));
+diff --git a/test-tokenize.js b/test-tokenize.js
+new file mode 100644
+index 0000000..cf29a3e
+--- /dev/null
++++ b/test-tokenize.js
+@@ -0,0 +1,5 @@
++const { tokenizeArgString } = require('./build/lib/tokenize-arg-string.js');
++console.log(tokenizeArgString('--msg "hello \\"world\\""'));
++console.log(tokenizeArgString('--msg \'it\\\'s ok\''));
++console.log(tokenizeArgString('--name hello\\ world'));
++console.log(tokenizeArgString('C:\\path\\to\\file'));
+diff --git a/test-tokenize.mjs b/test-tokenize.mjs
+new file mode 100644
+index 0000000..d690c0c
+--- /dev/null
++++ b/test-tokenize.mjs
+@@ -0,0 +1,5 @@
++import { tokenizeArgString } from './build/lib/tokenize-arg-string.js';
++console.log(tokenizeArgString('--msg "hello \\"world\\""'));
++console.log(tokenizeArgString('--msg \'it\\\'s ok\''));
++console.log(tokenizeArgString('--name hello\\ world'));
++console.log(tokenizeArgString('C:\\path\\to\\file'));
+diff --git a/test-tokenize2.mjs b/test-tokenize2.mjs
+new file mode 100644
+index 0000000..d12a46c
+--- /dev/null
++++ b/test-tokenize2.mjs
+@@ -0,0 +1,2 @@
++import { tokenizeArgString } from './build/lib/tokenize-arg-string.js';
++console.log(tokenizeArgString('C:\\\\path'));
+diff --git a/test/typescript/tokenize-arg-string.ts b/test/typescript/tokenize-arg-string.ts
+index dc77c3e..afa1915 100644
+--- a/test/typescript/tokenize-arg-string.ts
++++ b/test/typescript/tokenize-arg-string.ts
+@@ -77,6 +77,30 @@ describe('TokenizeArgString', function () {
+     strictEqual(args.length, 0)
+   })
+ 
++  it('handles escaped double quotes', function () {
++    const args = tokenizeArgString('--foo "hello \\"world\\""')
++    strictEqual(args[0], '--foo')
++    strictEqual(args[1], '"hello "world""')
++  })
++
++  it('handles escaped single quotes', function () {
++    const args = tokenizeArgString("--foo 'hello \\'world\\''")
++    strictEqual(args[0], '--foo')
++    strictEqual(args[1], "'hello 'world''")
++  })
++
++  it('handles escaped backslash', function () {
++    const args = tokenizeArgString('--foo C:\\\\path\\\\to\\\\file')
++    strictEqual(args[0], '--foo')
++    strictEqual(args[1], 'C:\\path\\to\\file')
++  })
++
++  it('handles escaped whitespace', function () {
++    const args = tokenizeArgString('--foo hello\\ world')
++    strictEqual(args[0], '--foo')
++    strictEqual(args[1], 'hello world')
++  })
++
+   it('handles array with unquoted string', function () {
+     const args = tokenizeArgString(['--foo', '99'])
+     strictEqual(args[0], '--foo')
+diff --git a/test/yargs-parser.mjs b/test/yargs-parser.mjs
+index 4c69237..ea55f2c 100644
+--- a/test/yargs-parser.mjs
++++ b/test/yargs-parser.mjs
+@@ -4174,4 +4174,26 @@ describe('yargs-parser', function () {
+       parsed[arg].should.equal(35)
+     })
+   })
++
++  describe('string parsing with escapes', function () {
++    it('handles escaped double quotes in string input', function () {
++      const parsed = parser('--msg "hello \\"world\\""')
++      parsed.msg.should.equal('hello "world"')
++    })
++
++    it('handles escaped single quotes in string input', function () {
++      const parsed = parser("--msg 'it\\'s ok'")
++      parsed.msg.should.equal("it's ok")
++    })
++
++    it('handles escaped whitespace in string input', function () {
++      const parsed = parser('--name hello\\ world')
++      parsed.name.should.equal('hello world')
++    })
++
++    it('keeps array input intact (regression test)', function () {
++      const parsed = parser(['--msg', '"hello \\"world\\""'])
++      parsed.msg.should.equal('"hello \\"world\\""')
++    })
++  })
+ })
