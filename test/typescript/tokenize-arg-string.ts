@@ -77,6 +77,30 @@ describe('TokenizeArgString', function () {
     strictEqual(args.length, 0)
   })
 
+  it('handles escaped double quotes', function () {
+    const args = tokenizeArgString('--foo "hello \\"world\\""')
+    strictEqual(args[0], '--foo')
+    strictEqual(args[1], '"hello "world""')
+  })
+
+  it('handles escaped single quotes', function () {
+    const args = tokenizeArgString("--foo 'hello \\'world\\''")
+    strictEqual(args[0], '--foo')
+    strictEqual(args[1], "'hello 'world''")
+  })
+
+  it('handles escaped backslash', function () {
+    const args = tokenizeArgString('--foo C:\\\\path\\\\to\\\\file')
+    strictEqual(args[0], '--foo')
+    strictEqual(args[1], 'C:\\path\\to\\file')
+  })
+
+  it('handles escaped whitespace', function () {
+    const args = tokenizeArgString('--foo hello\\ world')
+    strictEqual(args[0], '--foo')
+    strictEqual(args[1], 'hello world')
+  })
+
   it('handles array with unquoted string', function () {
     const args = tokenizeArgString(['--foo', '99'])
     strictEqual(args[0], '--foo')

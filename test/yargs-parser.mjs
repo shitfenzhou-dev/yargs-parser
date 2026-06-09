@@ -4174,4 +4174,26 @@ describe('yargs-parser', function () {
       parsed[arg].should.equal(35)
     })
   })
+
+  describe('string parsing with escapes', function () {
+    it('handles escaped double quotes in string input', function () {
+      const parsed = parser('--msg "hello \\"world\\""')
+      parsed.msg.should.equal('hello "world"')
+    })
+
+    it('handles escaped single quotes in string input', function () {
+      const parsed = parser("--msg 'it\\'s ok'")
+      parsed.msg.should.equal("it's ok")
+    })
+
+    it('handles escaped whitespace in string input', function () {
+      const parsed = parser('--name hello\\ world')
+      parsed.name.should.equal('hello world')
+    })
+
+    it('keeps array input intact (regression test)', function () {
+      const parsed = parser(['--msg', '"hello \\"world\\""'])
+      parsed.msg.should.equal('"hello \\"world\\""')
+    })
+  })
 })

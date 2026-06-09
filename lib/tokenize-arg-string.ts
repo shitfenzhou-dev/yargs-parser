@@ -22,6 +22,21 @@ export function tokenizeArgString (argString: string | any[]): string[] {
     prevC = c
     c = argString.charAt(ii)
 
+    if (c === '\\') {
+      const nextC = argString.charAt(ii + 1)
+      if (
+        nextC === "'" ||
+        nextC === '"' ||
+        nextC === '\\' ||
+        (nextC === ' ' && !opening)
+      ) {
+        if (!args[i]) args[i] = ''
+        args[i] += nextC
+        ii++
+        continue
+      }
+    }
+
     // split on spaces unless we're in quotes.
     if (c === ' ' && !opening) {
       if (!(prevC === ' ')) {
